@@ -7,4 +7,4 @@ DerivedData/
 .venv/
 # Model weights / large assets
 Models/
-*.mlmodel
+*.mlmodel.DS_Store

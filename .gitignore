@@ -1,0 +1,10 @@
+# Swift / Xcode
+.build/
+DerivedData/
+*.xcuserstate
+*.xcworkspace
+# Python venv (if any MLX helpers)
+.venv/
+# Model weights / large assets
+Models/
+*.mlmodel

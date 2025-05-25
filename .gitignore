@@ -8,3 +8,5 @@ DerivedData/
 # Model weights / large assets
 Models/
 *.mlmodel.DS_Store
+.DS_Store
+.DS_Store

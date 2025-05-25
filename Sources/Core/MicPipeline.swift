@@ -1,7 +1,5 @@
 // MARK: - MicPipeline.swift
-
-// Central publisher that glues mic input to our drift-detectors.
-// • In this bare-bones phase we _simulate_ words arriving – real ASR hookup next.
+// Fixed version with thread safety and memory management
 
 import Combine
 import Foundation
@@ -16,42 +14,91 @@ public final class MicPipeline: ObservableObject {
     @Published public var pace: PaceMetrics?
     @Published public var didPause: Bool = false
     @Published public var didRepair: Bool = false
-
+    
     // ―― Private helpers ――――――――――――――――――――――――――――――――――――――――――――――
     private let fillerDetector = FillerDetector()
     private let paceAnalyzer = PaceAnalyzer()
     private let pauseDetector = PauseDetector()
     private let repairDetector = RepairDetector()
-
+    
     private var last5sWordCount = 0
     private var paceTimer: Timer?
     private var cancellables = Set<AnyCancellable>()
-
+    
+    // Memory management
+    private let maxTranscriptWords = 1500
+    private var transcriptWords: [String] = []
+    
     // MARK: - Init
-
+    
     public init() {
-        // update pace every 5 s
+        setupPaceTimer()
+    }
+    
+    deinit {
+        cleanup()
+    }
+    
+    private func cleanup() {
+        paceTimer?.invalidate()
+        paceTimer = nil
+        cancellables.removeAll()
+    }
+    
+    private func setupPaceTimer() {
         paceTimer = Timer.scheduledTimer(withTimeInterval: 5, repeats: true) { [weak self] _ in
-            guard let self else { return }
-            pace = paceAnalyzer.record(words: last5sWordCount)
-            last5sWordCount = 0
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                self.pace = self.paceAnalyzer.record(words: self.last5sWordCount)
+                self.last5sWordCount = 0
+            }
         }
     }
-
-    deinit { paceTimer?.invalidate() }
-
+    
     // MARK: - Public sink — call from the ASR layer
-
+    
     /// Feed each finalised *word* along with the audio-time it ended.
     public func ingest(word: String, at timestamp: TimeInterval) {
-        let w = word.lowercased()
-
-        // detectors
+        let w = word.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
+        
+        guard !w.isEmpty else { return }
+        
+        // Update detectors
         fillerCount = fillerDetector.record(word: w)
         didRepair = repairDetector.record(word: w)
         didPause = pauseDetector.record(timestamp: timestamp)
-
+        
         last5sWordCount += 1
-        transcript += transcript.isEmpty ? w : " \(w)"
+        
+        // Efficient transcript management
+        updateTranscript(with: w)
+    }
+    
+    private func updateTranscript(with word: String) {
+        transcriptWords.append(word)
+        
+        // Limit transcript size to prevent memory issues
+        if transcriptWords.count > maxTranscriptWords {
+            // Keep only the most recent words
+            transcriptWords = Array(transcriptWords.suffix(maxTranscriptWords - 500))
+        }
+        
+        // Update published transcript
+        transcript = transcriptWords.joined(separator: " ")
+    }
+    
+    // MARK: - Public Methods
+    
+    public func clearTranscript() {
+        transcriptWords.removeAll()
+        transcript = ""
+    }
+    
+    public func getRecentWords(count: Int) -> [String] {
+        return Array(transcriptWords.suffix(count))
+    }
+    
+    public func getWordCount() -> Int {
+        return transcriptWords.count
     }
 }

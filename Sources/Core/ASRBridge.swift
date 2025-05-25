@@ -1,270 +1,361 @@
 // MARK: - ASRBridge.swift
-
-// Enhanced bridge that processes both words and concepts from Python MLX backend
+// Fixed version with proper memory management and error handling
 
 import Combine
 import Foundation
 import Network
 
 /// Enhanced bridge that handles real-time Parakeet transcription and Gemma concept extraction
-final class ASRBridge {
-    private let mic: MicPipeline
+@MainActor
+final class ASRBridge: ObservableObject {
+    // Use weak reference to prevent retain cycles
+    private weak var mic: MicPipeline?
     private var webSocket: URLSessionWebSocketTask?
     private var conceptSocket: URLSessionWebSocketTask?
     private var cancellables = Set<AnyCancellable>()
-
+    
+    // Reconnection handling
+    private var reconnectTimer: Timer?
+    private var reconnectAttempts = 0
+    private let maxReconnectAttempts = 5
+    
     // Concept processing
     @Published var recentConcepts: [ConceptNode] = []
     @Published var thoughtConnections: [ThoughtConnection] = []
-
+    
     private var conceptBuffer: [String] = []
-    private let conceptBufferLimit = 50 // words
+    private let conceptBufferLimit = 50
     private var lastConceptExtraction = Date()
-
+    
     init(mic: MicPipeline) {
         self.mic = mic
-        connectToTranscription()
-        connectToConcepts()
+        Task {
+            await connectToTranscription()
+            await connectToConcepts()
+        }
     }
-
+    
+    deinit {
+        cleanup()
+    }
+    
+    private func cleanup() {
+        reconnectTimer?.invalidate()
+        reconnectTimer = nil
+        
+        webSocket?.cancel(with: .goingAway, reason: nil)
+        conceptSocket?.cancel(with: .goingAway, reason: nil)
+        
+        cancellables.removeAll()
+    }
+    
     // MARK: - Transcription Connection (Port 8765)
-
-    private func connectToTranscription() {
+    
+    private func connectToTranscription() async {
         guard webSocket == nil else { return }
+        
         let url = URL(string: "ws://127.0.0.1:8765")!
-        webSocket = URLSession(configuration: .default)
-            .webSocketTask(with: url)
+        let session = URLSession(configuration: .default)
+        webSocket = session.webSocketTask(with: url)
         webSocket?.resume()
-        listenForWords()
+        
+        print("🔌 Connecting to transcription WebSocket...")
+        await listenForWords()
     }
-
-    private func listenForWords() {
-        webSocket?.receive { [weak self] result in
-            guard let self else { return }
-            switch result {
-            case let .failure(err):
-                print("🔌 Transcription WebSocket error: \(err)")
-                self.webSocket = nil
-                DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
-                    self.connectToTranscription()
+    
+    private func listenForWords() async {
+        guard let webSocket = webSocket else { return }
+        
+        do {
+            while webSocket.state == .running {
+                let message = try await webSocket.receive()
+                
+                switch message {
+                case .string(let text):
+                    await processTranscriptionEvent(text)
+                case .data(let data):
+                    if let text = String(data: data, encoding: .utf8) {
+                        await processTranscriptionEvent(text)
+                    }
+                @unknown default:
+                    break
                 }
-            case let .success(.string(text)):
-                self.processTranscriptionEvent(text)
-                self.listenForWords() // Continue listening
-            default:
-                self.listenForWords()
             }
+        } catch {
+            print("🔌 Transcription WebSocket error: \(error)")
+            await handleDisconnection(isTranscription: true)
         }
     }
-
-    private func processTranscriptionEvent(_ text: String) {
-        guard let data = text.data(using: .utf8),
-              let event = try? JSONDecoder().decode(TranscriptionEvent.self, from: data)
-        else {
-            return
-        }
-
-        Task { @MainActor in
+    
+    private func processTranscriptionEvent(_ text: String) async {
+        do {
+            guard let data = text.data(using: .utf8) else {
+                print("⚠️ Failed to convert text to data")
+                return
+            }
+            
+            let event = try JSONDecoder().decode(TranscriptionEvent.self, from: data)
+            
             // Feed word to main pipeline
-            mic.ingest(word: event.w, at: event.t)
-
+            await mic?.ingest(word: event.w, at: event.t)
+            
             // Buffer for concept extraction
             conceptBuffer.append(event.w)
             if conceptBuffer.count > conceptBufferLimit {
                 conceptBuffer.removeFirst()
             }
-
+            
             // Trigger concept extraction periodically
             let now = Date()
             if now.timeIntervalSince(lastConceptExtraction) > 5.0 && conceptBuffer.count >= 10 {
                 await requestConceptExtraction()
                 lastConceptExtraction = now
             }
+            
+        } catch {
+            print("🔥 Failed to decode transcription event: \(error)")
         }
     }
-
+    
     // MARK: - Concept Connection (Port 8766)
-
-    private func connectToConcepts() {
+    
+    private func connectToConcepts() async {
         guard conceptSocket == nil else { return }
+        
         let url = URL(string: "ws://127.0.0.1:8766")!
-        conceptSocket = URLSession(configuration: .default)
-            .webSocketTask(with: url)
+        let session = URLSession(configuration: .default)
+        conceptSocket = session.webSocketTask(with: url)
         conceptSocket?.resume()
-        listenForConcepts()
+        
+        print("🧠 Connecting to concept WebSocket...")
+        await listenForConcepts()
     }
-
-    private func listenForConcepts() {
-        conceptSocket?.receive { [weak self] result in
-            guard let self else { return }
-            switch result {
-            case let .failure(err):
-                print("🧠 Concept WebSocket error: \(err)")
-                self.conceptSocket = nil
-                DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
-                    self.connectToConcepts()
+    
+    private func listenForConcepts() async {
+        guard let conceptSocket = conceptSocket else { return }
+        
+        do {
+            while conceptSocket.state == .running {
+                let message = try await conceptSocket.receive()
+                
+                switch message {
+                case .string(let text):
+                    await processConceptEvent(text)
+                case .data(let data):
+                    if let text = String(data: data, encoding: .utf8) {
+                        await processConceptEvent(text)
+                    }
+                @unknown default:
+                    break
                 }
-            case let .success(.string(text)):
-                self.processConceptEvent(text)
-                self.listenForConcepts() // Continue listening
-            default:
-                self.listenForConcepts()
             }
+        } catch {
+            print("🧠 Concept WebSocket error: \(error)")
+            await handleDisconnection(isTranscription: false)
         }
     }
-
-    private func processConceptEvent(_ text: String) {
-        guard let data = text.data(using: .utf8),
-              let event = try? JSONDecoder().decode(ConceptEvent.self, from: data)
-        else {
-            return
-        }
-
-        Task { @MainActor in
+    
+    private func processConceptEvent(_ text: String) async {
+        do {
+            guard let data = text.data(using: .utf8) else {
+                print("⚠️ Failed to convert concept text to data")
+                return
+            }
+            
+            let event = try JSONDecoder().decode(ConceptEvent.self, from: data)
+            
             switch event.type {
             case "concepts":
-                if let conceptsData = event.data as? [[String: Any]] {
-                    let concepts = conceptsData.compactMap { dict -> ConceptNode? in
-                        guard let text = dict["text"] as? String,
-                              let category = dict["category"] as? String,
-                              let confidence = dict["confidence"] as? Double
-                        else {
-                            return nil
-                        }
-
-                        return ConceptNode(
-                            text: text,
-                            category: ConceptCategory(rawValue: category) ?? .task,
-                            confidence: Float(confidence),
-                            timestamp: Date(),
-                            emotionalTone: dict["emotional_tone"] as? String
-                        )
-                    }
-
-                    // Update recent concepts (keep last 20)
-                    recentConcepts.append(contentsOf: concepts)
-                    if recentConcepts.count > 20 {
-                        recentConcepts.removeFirst(recentConcepts.count - 20)
-                    }
+                let concepts = event.concepts.compactMap { dict -> ConceptNode? in
+                    ConceptNode(
+                        text: dict.text,
+                        category: ConceptCategory(rawValue: dict.category) ?? .task,
+                        confidence: Float(dict.confidence),
+                        timestamp: Date(),
+                        emotionalTone: dict.emotionalTone
+                    )
                 }
-
+                
+                // Update recent concepts (keep last 20)
+                recentConcepts.append(contentsOf: concepts)
+                if recentConcepts.count > 20 {
+                    recentConcepts.removeFirst(recentConcepts.count - 20)
+                }
+                
             case "connections":
-                if let connectionsData = event.data as? [[String: Any]] {
-                    let connections = connectionsData.compactMap { dict -> ThoughtConnection? in
-                        guard let from = dict["from"] as? String,
-                              let to = dict["to"] as? String,
-                              let strength = dict["strength"] as? Double
-                        else {
-                            return nil
-                        }
-
-                        return ThoughtConnection(
-                            from: from,
-                            to: to,
-                            strength: Float(strength),
-                            createdAt: Date()
-                        )
-                    }
-
-                    thoughtConnections = connections
+                let connections = event.connections.compactMap { dict -> ThoughtConnection? in
+                    ThoughtConnection(
+                        from: dict.from,
+                        to: dict.to,
+                        strength: Float(dict.strength),
+                        createdAt: Date()
+                    )
                 }
-
+                
+                thoughtConnections = connections
+                
             default:
                 break
             }
+            
+        } catch {
+            print("🔥 Failed to decode concept event: \(error)")
         }
     }
-
+    
     // MARK: - Concept Extraction Request
-
+    
     private func requestConceptExtraction() async {
         guard !conceptBuffer.isEmpty else { return }
-
+        
         let text = conceptBuffer.joined(separator: " ")
         let request = ConceptExtractionRequest(
             text: text,
             timestamp: Date().timeIntervalSince1970,
             driftIndicators: getCurrentDriftIndicators()
         )
-
-        guard let data = try? JSONEncoder().encode(request),
-              let jsonString = String(data: data, encoding: .utf8)
-        else {
-            return
-        }
-
+        
         do {
-            try await conceptSocket?.send(.string(jsonString))
+            let data = try JSONEncoder().encode(request)
+            guard let conceptSocket = conceptSocket else { return }
+            
+            try await conceptSocket.send(.data(data))
+            
         } catch {
             print("❌ Failed to send concept extraction request: \(error)")
         }
     }
-
-    private func getCurrentDriftIndicators() -> [String: Any] {
-        return [
-            "filler_count": mic.fillerCount,
-            "pace_wpm": mic.pace?.currentWPM ?? 0,
-            "did_pause": mic.didPause,
-            "did_repair": mic.didRepair,
-        ]
+    
+    private func getCurrentDriftIndicators() -> DriftIndicators {
+        guard let mic = mic else {
+            return DriftIndicators(fillerCount: 0, paceWPM: 0, didPause: false, didRepair: false)
+        }
+        
+        return DriftIndicators(
+            fillerCount: mic.fillerCount,
+            paceWPM: Int(mic.pace?.currentWPM ?? 0),
+            didPause: mic.didPause,
+            didRepair: mic.didRepair
+        )
     }
-}
-
-// MARK: - Data Models
-
-struct TranscriptionEvent: Decodable {
-    let w: String // word
-    let t: TimeInterval // timestamp
-    let confidence: Float? // optional confidence score
-}
-
-struct ConceptEvent: Decodable {
-    let type: String // "concepts" or "connections"
-    let data: Any // flexible data payload
-
-    private enum CodingKeys: String, CodingKey {
-        case type, data
-    }
-
-    init(from decoder: Decoder) throws {
-        let container = try decoder.container(keyedBy: CodingKeys.self)
-        type = try container.decode(String.self, forKey: .type)
-
-        // Decode data as generic JSON
-        if let jsonObject = try? container.decode([String: Any].self, forKey: .data) {
-            data = jsonObject
-        } else if let jsonArray = try? container.decode([[String: Any]].self, forKey: .data) {
-            data = jsonArray
+    
+    // MARK: - Reconnection Logic
+    
+    private func handleDisconnection(isTranscription: Bool) async {
+        if isTranscription {
+            webSocket = nil
         } else {
-            data = [:]
+            conceptSocket = nil
+        }
+        
+        guard reconnectAttempts < maxReconnectAttempts else {
+            print("❌ Max reconnection attempts reached. Giving up.")
+            return
+        }
+        
+        reconnectAttempts += 1
+        let delay = Double(reconnectAttempts) * 2.0 // Exponential backoff
+        
+        print("🔄 Reconnecting in \(delay) seconds... (attempt \(reconnectAttempts)/\(maxReconnectAttempts))")
+        
+        try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
+        
+        if isTranscription {
+            await connectToTranscription()
+        } else {
+            await connectToConcepts()
         }
     }
 }
 
-struct ConceptExtractionRequest: Encodable {
-    let text: String
-    let timestamp: TimeInterval
-    let driftIndicators: [String: Any]
+// MARK: - Fixed Data Models
 
-    private enum CodingKeys: String, CodingKey {
-        case text, timestamp, driftIndicators
+struct TranscriptionEvent: Codable {
+    let w: String // word
+    let t: TimeInterval // timestamp
+    let c: Float? // optional confidence score
+}
+
+struct ConceptEvent: Codable {
+    let type: String
+    let concepts: [ConceptData]
+    let connections: [ConnectionData]
+    
+    enum CodingKeys: String, CodingKey {
+        case type, data
     }
-
+    
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        type = try container.decode(String.self, forKey: .type)
+        
+        // Handle polymorphic data field
+        if type == "concepts" {
+            concepts = try container.decode([ConceptData].self, forKey: .data)
+            connections = []
+        } else if type == "connections" {
+            connections = try container.decode([ConnectionData].self, forKey: .data)
+            concepts = []
+        } else {
+            concepts = []
+            connections = []
+        }
+    }
+    
     func encode(to encoder: Encoder) throws {
         var container = encoder.container(keyedBy: CodingKeys.self)
-        try container.encode(text, forKey: .text)
-        try container.encode(timestamp, forKey: .timestamp)
+        try container.encode(type, forKey: .type)
+        
+        if type == "concepts" {
+            try container.encode(concepts, forKey: .data)
+        } else if type == "connections" {
+            try container.encode(connections, forKey: .data)
+        }
+    }
+}
 
-        // Encode drift indicators as JSON object
-        let jsonData = try JSONSerialization.data(withJSONObject: driftIndicators)
-        let jsonString = String(data: jsonData, encoding: .utf8) ?? "{}"
-        try container.encode(jsonString, forKey: .driftIndicators)
+struct ConceptData: Codable {
+    let text: String
+    let category: String
+    let confidence: Double
+    let emotionalTone: String?
+    
+    enum CodingKeys: String, CodingKey {
+        case text, category, confidence
+        case emotionalTone = "emotional_tone"
+    }
+}
+
+struct ConnectionData: Codable {
+    let from: String
+    let to: String
+    let strength: Double
+}
+
+struct ConceptExtractionRequest: Codable {
+    let text: String
+    let timestamp: TimeInterval
+    let driftIndicators: DriftIndicators
+}
+
+struct DriftIndicators: Codable {
+    let fillerCount: Int
+    let paceWPM: Int
+    let didPause: Bool
+    let didRepair: Bool
+    
+    enum CodingKeys: String, CodingKey {
+        case fillerCount = "filler_count"
+        case paceWPM = "pace_wpm"
+        case didPause = "did_pause"
+        case didRepair = "did_repair"
     }
 }
 
 // MARK: - Concept Data Models
 
-struct ConceptNode {
+struct ConceptNode: Identifiable {
+    let id = UUID()
     let text: String
     let category: ConceptCategory
     let confidence: Float
@@ -281,7 +372,8 @@ enum ConceptCategory: String, CaseIterable {
     case decision
 }
 
-struct ThoughtConnection {
+struct ThoughtConnection: Identifiable {
+    let id = UUID()
     let from: String
     let to: String
     let strength: Float

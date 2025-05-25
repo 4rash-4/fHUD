@@ -1,4 +1,5 @@
 // MARK: - PauseDetector.swift
+
 // Detects silences ≥ 0.3 s between words.
 
 import Foundation

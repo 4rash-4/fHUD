@@ -1,4 +1,5 @@
 // MARK: - RingBuffer.swift
+
 // Lightweight generic circular buffer for real-time signal data.
 
 import Foundation
@@ -13,7 +14,7 @@ public final class RingBuffer<Element> {
     public init(capacity: Int) {
         precondition(capacity > 0, "Capacity must be > 0")
         self.capacity = capacity
-        self.store = Array(repeating: nil, count: capacity)
+        store = Array(repeating: nil, count: capacity)
     }
 
     /// Append a new element, dropping the oldest if full.
@@ -27,7 +28,7 @@ public final class RingBuffer<Element> {
     public func toArray() -> [Element] {
         var out: [Element] = []
         out.reserveCapacity(count)
-        for i in 0..<count {
+        for i in 0 ..< count {
             let j = (idx + i) % capacity
             if let e = store[j] { out.append(e) }
         }

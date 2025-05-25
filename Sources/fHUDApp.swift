@@ -7,6 +7,7 @@ import SwiftUI
 struct fHUDApp: App {
     // Shared speech/ASR pipeline available app‑wide
     @StateObject private var micPipeline = MicPipeline()
+    private let _bridge = ASRBridge(mic: micPipeline)
 
     var body: some Scene {
         WindowGroup {

@@ -1,4 +1,5 @@
 // MARK: - RepairDetector.swift
+
 // Flags immediate word repetitions (e.g., “I I think”)
 
 import Foundation

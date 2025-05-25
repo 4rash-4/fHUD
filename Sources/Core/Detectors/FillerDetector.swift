@@ -1,11 +1,12 @@
 // MARK: - FillerDetector.swift
+
 // Counts “um / uh / er / hmm” tokens in a sliding window.
 
 import Foundation
 
 public final class FillerDetector {
-    private let fillers: Set<String> = ["um","uh","erm","hmm","like"]   // tweak anytime
-    private let window = RingBuffer<String>(capacity: 30)              // last 30 words
+    private let fillers: Set<String> = ["um", "uh", "erm", "hmm", "like"] // tweak anytime
+    private let window = RingBuffer<String>(capacity: 30) // last 30 words
 
     /// Feed *one* lowercase word at a time.
     public func record(word: String) -> Int {

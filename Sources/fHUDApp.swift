@@ -1,4 +1,5 @@
 // MARK: - fHUDApp.swift
+
 // Thought Crystallizer - Fixed app architecture with proper state management
 
 import SwiftUI
@@ -9,14 +10,14 @@ struct fHUDApp: App {
     @StateObject private var micPipeline = MicPipeline()
     @StateObject private var asrBridge: ASRBridge
     @State private var showDebugHUD = false
-    
+
     init() {
         // Initialize ASRBridge with MicPipeline in init
         let pipeline = MicPipeline()
         _micPipeline = StateObject(wrappedValue: pipeline)
         _asrBridge = StateObject(wrappedValue: ASRBridge(mic: pipeline))
     }
-    
+
     var body: some Scene {
         // Main ambient display window
         WindowGroup("Thought Crystallizer") {
@@ -31,7 +32,7 @@ struct fHUDApp: App {
         }
         .windowStyle(.hiddenTitleBar)
         .windowResizability(.contentSize)
-        
+
         // Menu bar controls
         MenuBarExtra("Thought Crystallizer", systemImage: "brain.head.profile") {
             MenuBarContent(showDebugHUD: $showDebugHUD)
@@ -40,7 +41,7 @@ struct fHUDApp: App {
         }
         .menuBarExtraStyle(.window)
     }
-    
+
     private func configureWindow() {
         // Configure main window appearance
         if let window = NSApplication.shared.windows.first {
@@ -60,30 +61,30 @@ struct MenuBarContent: View {
     @EnvironmentObject var asrBridge: ASRBridge
     @Binding var showDebugHUD: Bool
     @State private var isPaused = false
-    
+
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             // Header
             headerSection
-            
+
             Divider()
-            
+
             // Status section
             statusSection
-            
+
             if !mic.transcript.isEmpty {
                 Divider()
                 // Minimal stats (no gamification)
                 statsSection
             }
-            
+
             Divider()
-            
+
             // Controls
             controlsSection
-            
+
             Divider()
-            
+
             // Quit button
             Button("Quit Thought Crystallizer") {
                 NSApplication.shared.terminate(nil)
@@ -93,32 +94,32 @@ struct MenuBarContent: View {
         .padding()
         .frame(width: 280)
     }
-    
+
     private var headerSection: some View {
         HStack(spacing: 12) {
             Image(systemName: "brain.head.profile")
                 .font(.title2)
                 .foregroundColor(.accentColor)
-            
+
             VStack(alignment: .leading, spacing: 2) {
                 Text("Thought Crystallizer")
                     .font(.headline)
-                
+
                 HStack(spacing: 4) {
                     Circle()
                         .fill(statusColor)
                         .frame(width: 8, height: 8)
-                    
+
                     Text(statusText)
                         .font(.caption)
                         .foregroundColor(.secondary)
                 }
             }
-            
+
             Spacer()
         }
     }
-    
+
     private var statusSection: some View {
         VStack(alignment: .leading, spacing: 6) {
             if !mic.transcript.isEmpty {
@@ -126,7 +127,7 @@ struct MenuBarContent: View {
                     .font(.caption)
                     .foregroundColor(.secondary)
             }
-            
+
             if !asrBridge.recentConcepts.isEmpty {
                 Label("\(asrBridge.recentConcepts.count) concepts identified", systemImage: "lightbulb")
                     .font(.caption)
@@ -134,7 +135,7 @@ struct MenuBarContent: View {
             }
         }
     }
-    
+
     private var statsSection: some View {
         VStack(alignment: .leading, spacing: 6) {
             if let pace = mic.pace {
@@ -143,7 +144,7 @@ struct MenuBarContent: View {
                         .foregroundColor(.blue)
                     Text("\(Int(pace.currentWPM)) WPM")
                         .font(.caption)
-                    
+
                     if pace.isBelowThreshold {
                         Text("(slow)")
                             .font(.caption2)
@@ -151,7 +152,7 @@ struct MenuBarContent: View {
                     }
                 }
             }
-            
+
             if mic.fillerCount > 0 {
                 HStack {
                     Image(systemName: "pause.circle")
@@ -160,7 +161,7 @@ struct MenuBarContent: View {
                         .font(.caption)
                 }
             }
-            
+
             if mic.didPause {
                 HStack {
                     Image(systemName: "stop.circle")
@@ -172,7 +173,7 @@ struct MenuBarContent: View {
             }
         }
     }
-    
+
     private var controlsSection: some View {
         VStack(alignment: .leading, spacing: 8) {
             Toggle("Debug Overlay", isOn: $showDebugHUD)
@@ -180,13 +181,13 @@ struct MenuBarContent: View {
                 .onChange(of: showDebugHUD) { newValue in
                     toggleDebugWindow(show: newValue)
                 }
-            
+
             Button(isPaused ? "Resume" : "Pause", systemImage: isPaused ? "play.fill" : "pause.fill") {
                 isPaused.toggle()
                 // TODO: Implement pause functionality
             }
             .controlSize(.small)
-            
+
             Button("Clear History", systemImage: "trash") {
                 mic.clearTranscript()
                 // Also clear concepts
@@ -196,7 +197,7 @@ struct MenuBarContent: View {
             .controlSize(.small)
         }
     }
-    
+
     private var statusColor: Color {
         if mic.transcript.isEmpty {
             return .gray
@@ -206,7 +207,7 @@ struct MenuBarContent: View {
             return .green
         }
     }
-    
+
     private var statusText: String {
         if mic.transcript.isEmpty {
             return "Waiting for speech..."
@@ -218,11 +219,11 @@ struct MenuBarContent: View {
             return "Active"
         }
     }
-    
+
     private func getWordCount() -> Int {
         return mic.getWordCount()
     }
-    
+
     private func toggleDebugWindow(show: Bool) {
         // Implementation for debug window toggle
         if show {
@@ -230,7 +231,7 @@ struct MenuBarContent: View {
             let debugView = HUDOverlayView()
                 .environmentObject(mic)
                 .environmentObject(asrBridge)
-            
+
             let hostingController = NSHostingController(rootView: debugView)
             let window = NSWindow(contentViewController: hostingController)
             window.title = "Debug HUD"

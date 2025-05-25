@@ -1,4 +1,5 @@
 // MARK: - MicPipeline.swift
+
 // Fixed version with thread safety and memory management
 
 import Combine
@@ -14,37 +15,37 @@ public final class MicPipeline: ObservableObject {
     @Published public var pace: PaceMetrics?
     @Published public var didPause: Bool = false
     @Published public var didRepair: Bool = false
-    
+
     // ―― Private helpers ――――――――――――――――――――――――――――――――――――――――――――――
     private let fillerDetector = FillerDetector()
     private let paceAnalyzer = PaceAnalyzer()
     private let pauseDetector = PauseDetector()
     private let repairDetector = RepairDetector()
-    
+
     private var last5sWordCount = 0
     private var paceTimer: Timer?
     private var cancellables = Set<AnyCancellable>()
-    
+
     // Memory management
     private let maxTranscriptWords = 1500
     private var transcriptWords: [String] = []
-    
+
     // MARK: - Init
-    
+
     public init() {
         setupPaceTimer()
     }
-    
+
     deinit {
         cleanup()
     }
-    
+
     private func cleanup() {
         paceTimer?.invalidate()
         paceTimer = nil
         cancellables.removeAll()
     }
-    
+
     private func setupPaceTimer() {
         paceTimer = Timer.scheduledTimer(withTimeInterval: 5, repeats: true) { [weak self] _ in
             Task { @MainActor [weak self] in
@@ -54,50 +55,50 @@ public final class MicPipeline: ObservableObject {
             }
         }
     }
-    
+
     // MARK: - Public sink — call from the ASR layer
-    
+
     /// Feed each finalised *word* along with the audio-time it ended.
     public func ingest(word: String, at timestamp: TimeInterval) {
         let w = word.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
-        
+
         guard !w.isEmpty else { return }
-        
+
         // Update detectors
         fillerCount = fillerDetector.record(word: w)
         didRepair = repairDetector.record(word: w)
         didPause = pauseDetector.record(timestamp: timestamp)
-        
+
         last5sWordCount += 1
-        
+
         // Efficient transcript management
         updateTranscript(with: w)
     }
-    
+
     private func updateTranscript(with word: String) {
         transcriptWords.append(word)
-        
+
         // Limit transcript size to prevent memory issues
         if transcriptWords.count > maxTranscriptWords {
             // Keep only the most recent words
             transcriptWords = Array(transcriptWords.suffix(maxTranscriptWords - 500))
         }
-        
+
         // Update published transcript
         transcript = transcriptWords.joined(separator: " ")
     }
-    
+
     // MARK: - Public Methods
-    
+
     public func clearTranscript() {
         transcriptWords.removeAll()
         transcript = ""
     }
-    
+
     public func getRecentWords(count: Int) -> [String] {
         return Array(transcriptWords.suffix(count))
     }
-    
+
     public func getWordCount() -> Int {
         return transcriptWords.count
     }

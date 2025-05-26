@@ -1,6 +1,6 @@
 """
-Real-time Parakeet MLX WebSocket server for fHUD
-Streams word-level transcription with precise timestamps to Swift client
+Optimized Parakeet MLX WebSocket server for fHUD
+High-performance streaming with deduplication and memory management
 """
 
 import asyncio
@@ -11,188 +11,309 @@ import numpy as np
 import sounddevice as sd
 from collections import deque
 import threading
-from queue import Queue
+from queue import Queue, Empty
 import traceback
+import logging
+from typing import Set, Dict, List, Optional, Tuple
+
+# Configure logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 # MLX imports
 import mlx.core as mx
 from parakeet_mlx import from_pretrained
 
-class ParakeetStreamer:
-    def __init__(self, model_name="mlx-community/parakeet-tdt-0.6b-v2"):
-        print(f"🎤 Loading Parakeet model: {model_name}")
-        self.model = from_pretrained(model_name, dtype=mx.bfloat16)
-        print("✅ Parakeet model loaded successfully")
+class OptimizedParakeetStreamer:
+    def __init__(self, model_name: str = "mlx-community/parakeet-tdt-0.6b-v2"):
+        logger.info(f"🎤 Loading Parakeet model: {model_name}")
+        
+        try:
+            self.model = from_pretrained(model_name, dtype=mx.bfloat16)
+            logger.info("✅ Parakeet model loaded successfully")
+        except Exception as e:
+            logger.error(f"❌ Failed to load model: {e}")
+            raise
         
         # Audio configuration
         self.sample_rate = 16000
-        self.chunk_duration = 2.0  # Process 2-second chunks
-        self.overlap_duration = 0.5  # 0.5s overlap between chunks
+        self.chunk_duration = 1.5  # Shorter chunks for lower latency
+        self.overlap_duration = 0.3  # Minimal overlap
+        self.chunk_samples = int(self.sample_rate * self.chunk_duration)
+        
+        # Streaming context
+        self.stream_context = None
+        self.context_size = (256, 256)
+        self.depth = 2
         
         # Audio buffer management
-        self.audio_buffer = deque(maxlen=int(self.sample_rate * 10))  # 10 seconds max
-        self.processing_queue = Queue()
+        self.audio_buffer = deque(maxlen=int(self.sample_rate * 10))  # 10s max buffer
+        self.processing_queue = Queue(maxsize=5)  # Limit queue size
         self.is_streaming = False
         
-        # Results tracking
-        self.processed_words = set()  # Track words we've already sent
-        self.last_chunk_end = 0.0
+        # Deduplication with time window
+        self.sent_words: Dict[str, float] = {}  # word_id -> timestamp
+        self.cleanup_interval = 30.0
+        self.last_cleanup = time.time()
+        self.dedup_window = 2.0  # 2 second window for deduplication
+        
+        # Performance monitoring
+        self.words_processed = 0
+        self.last_perf_check = time.time()
+        
+        # Thread safety
+        self.buffer_lock = threading.Lock()
         
     def audio_callback(self, indata, frames, time_info, status):
-        """Called by sounddevice for each audio chunk"""
+        """Optimized audio callback with minimal processing"""
         if status:
-            print(f"⚠️  Audio callback status: {status}")
+            logger.warning(f"⚠️  Audio callback status: {status}")
         
-        # Convert to float32 and add to buffer
-        audio_chunk = indata[:, 0].astype(np.float32)  # Take mono channel
-        self.audio_buffer.extend(audio_chunk)
+        # Convert to float32 and add to buffer with lock
+        audio_chunk = indata[:, 0].astype(np.float32)
         
-        # Trigger processing if we have enough data
-        if len(self.audio_buffer) >= int(self.sample_rate * self.chunk_duration):
-            self.processing_queue.put(time.time())
-
-    def process_audio_chunk(self):
-        """Process accumulated audio through Parakeet"""
-        if len(self.audio_buffer) < int(self.sample_rate * self.chunk_duration):
-            return []
+        with self.buffer_lock:
+            self.audio_buffer.extend(audio_chunk)
         
-        # Extract audio chunk with overlap
-        chunk_samples = int(self.sample_rate * self.chunk_duration)
-        audio_array = np.array(list(self.audio_buffer)[-chunk_samples:])
+        # Trigger processing only when we have enough data
+        current_buffer_size = len(self.audio_buffer)
+        if current_buffer_size >= self.chunk_samples:
+            try:
+                # Non-blocking put
+                self.processing_queue.put_nowait(time.time())
+            except:
+                pass  # Queue full, skip this trigger
+                
+    def process_audio_chunk(self) -> List[Dict]:
+        """Process audio chunk with streaming context"""
+        with self.buffer_lock:
+            if len(self.audio_buffer) < self.chunk_samples:
+                return []
+            
+            # Extract chunk
+            audio_array = np.array(list(self.audio_buffer))[:self.chunk_samples]
+            
+            # Remove processed samples, keeping overlap
+            overlap_samples = int(self.sample_rate * self.overlap_duration)
+            for _ in range(self.chunk_samples - overlap_samples):
+                if self.audio_buffer:
+                    self.audio_buffer.popleft()
         
-        # Convert to MLX array
-        audio_mx = mx.array(audio_array)
+        # Convert to MLX
+        audio_mx = mx.array(audio_array, dtype=mx.float32)
         
         try:
-            # Transcribe with Parakeet
-            result = self.model.transcribe_stream(context_size=(256, 256), depth=1)
-            with result:
-                result.add_audio(audio_mx)
-                transcription_result = result.result
+            # Use streaming context for continuous processing
+            if self.stream_context is None:
+                self.stream_context = self.model.transcribe_stream(
+                    context_size=self.context_size, 
+                    depth=self.depth
+                )
+                self.stream_context.__enter__()
             
-            # Extract new words with timestamps
+            # Add audio to stream
+            self.stream_context.add_audio(audio_mx)
+            result = self.stream_context.result
+            
+            # Extract new words with deduplication
             new_words = []
             current_time = time.time()
             
-            for sentence in transcription_result.sentences:
+            for sentence in result.sentences:
                 for token in sentence.tokens:
-                    # Create unique identifier for this word
-                    word_id = f"{token.text}_{token.start:.3f}"
+                    # Create unique word identifier
+                    word_key = f"{token.text.strip().lower()}_{token.start:.3f}"
                     
-                    if word_id not in self.processed_words:
-                        self.processed_words.add(word_id)
-                        
-                        # Calculate absolute timestamp
-                        absolute_time = current_time - self.chunk_duration + token.start
-                        
-                        new_words.append({
-                            'word': token.text.strip(),
-                            'timestamp': absolute_time,
-                            'confidence': 1.0,  # Parakeet doesn't provide confidence
-                            'start': token.start,
-                            'duration': token.duration
-                        })
+                    # Check if word was recently sent
+                    if word_key in self.sent_words:
+                        last_sent = self.sent_words[word_key]
+                        if current_time - last_sent < self.dedup_window:
+                            continue  # Skip duplicate
+                    
+                    # Track sent word
+                    self.sent_words[word_key] = current_time
+                    
+                    # Calculate absolute timestamp
+                    absolute_time = current_time - self.chunk_duration + token.start
+                    
+                    new_words.append({
+                        'word': token.text.strip(),
+                        'timestamp': absolute_time,
+                        'confidence': 0.95,  # High confidence for Parakeet
+                        'duration': token.duration
+                    })
+                    
+                    self.words_processed += 1
             
+            # Periodic cleanup
+            if current_time - self.last_cleanup > self.cleanup_interval:
+                self.cleanup_old_words(current_time)
+                self.last_cleanup = current_time
+                
+            # Performance monitoring
+            if current_time - self.last_perf_check > 5.0:
+                wps = self.words_processed / 5.0
+                logger.info(f"📊 Performance: {wps:.1f} words/sec")
+                self.words_processed = 0
+                self.last_perf_check = current_time
+                
             return new_words
             
         except Exception as e:
-            print(f"❌ Parakeet processing error: {e}")
-            traceback.print_exc()
+            logger.error(f"❌ Processing error: {e}")
+            logger.error(traceback.format_exc())
+            # Reset context on error
+            if self.stream_context:
+                try:
+                    self.stream_context.__exit__(None, None, None)
+                except:
+                    pass
+                self.stream_context = None
             return []
-
+    
+    def cleanup_old_words(self, current_time: float):
+        """Remove old entries to prevent memory growth"""
+        cutoff_time = current_time - 300  # 5 minutes
+        
+        # Remove old entries
+        old_keys = [k for k, v in self.sent_words.items() if v < cutoff_time]
+        for key in old_keys:
+            del self.sent_words[key]
+            
+        logger.info(f"🧹 Cleaned {len(old_keys)} old word entries")
+        
     async def start_streaming(self, websocket):
-        """Start audio streaming and processing"""
+        """Start optimized streaming"""
         self.is_streaming = True
         
-        # Start audio input stream
+        # Configure audio stream for low latency
         stream = sd.InputStream(
             channels=1,
             samplerate=self.sample_rate,
             callback=self.audio_callback,
-            blocksize=1024
+            blocksize=512,  # Small blocks for low latency
+            latency='low'
         )
         
-        print("🎙️  Starting audio stream...")
+        logger.info("🎙️  Starting optimized audio stream...")
         stream.start()
         
         try:
             while self.is_streaming:
-                # Process audio chunks as they become available
-                if not self.processing_queue.empty():
-                    self.processing_queue.get()
-                    
-                    words = self.process_audio_chunk()
-                    
-                    # Send new words to Swift client
-                    for word_data in words:
-                        try:
-                            message = {
-                                "w": word_data['word'],
-                                "t": word_data['timestamp'] - time.time(),  # Relative time
-                                "confidence": word_data.get('confidence', 1.0)
-                            }
-                            await websocket.send(json.dumps(message))
-                            print(f"📤 Sent: {word_data['word']} @ {message['t']:.2f}s")
-                            
-                        except websockets.exceptions.ConnectionClosed:
-                            print("🔌 WebSocket connection closed")
-                            break
+                # Process available audio chunks
+                processed_any = False
                 
-                await asyncio.sleep(0.1)  # Small delay to prevent busy waiting
+                while not self.processing_queue.empty():
+                    try:
+                        self.processing_queue.get_nowait()
+                        words = self.process_audio_chunk()
+                        
+                        # Send words immediately
+                        for word_data in words:
+                            try:
+                                # Compact message format
+                                message = {
+                                    "w": word_data['word'],
+                                    "t": word_data['timestamp'] - time.time(),
+                                    "c": word_data['confidence']
+                                }
+                                
+                                await websocket.send(json.dumps(message, separators=(',', ':')))
+                                processed_any = True
+                                
+                            except websockets.exceptions.ConnectionClosed:
+                                logger.info("🔌 Connection closed")
+                                self.is_streaming = False
+                                break
+                                
+                    except Empty:
+                        break
                 
+                # Small delay if nothing processed
+                if not processed_any:
+                    await asyncio.sleep(0.05)
+                else:
+                    await asyncio.sleep(0.01)  # Tiny delay between batches
+                    
         except Exception as e:
-            print(f"❌ Streaming error: {e}")
-            traceback.print_exc()
+            logger.error(f"❌ Streaming error: {e}")
+            logger.error(traceback.format_exc())
         finally:
             stream.stop()
             stream.close()
-            print("🛑 Audio stream stopped")
+            
+            # Cleanup streaming context
+            if self.stream_context:
+                try:
+                    self.stream_context.__exit__(None, None, None)
+                except:
+                    pass
+                self.stream_context = None
+                
+            logger.info("🛑 Stream stopped")
 
     def stop_streaming(self):
-        """Stop the streaming process"""
+        """Stop streaming and cleanup"""
         self.is_streaming = False
 
-# Global streamer instance
-streamer = None
+# Global instance management
+streamer: Optional[OptimizedParakeetStreamer] = None
+streamer_lock = threading.Lock()
 
 async def handle_client(websocket, path):
-    """Handle WebSocket connections from Swift client"""
+    """Handle WebSocket connections with proper cleanup"""
     global streamer
     
-    print(f"🔗 New client connected: {websocket.remote_address}")
+    client_info = f"{websocket.remote_address[0]}:{websocket.remote_address[1]}"
+    logger.info(f"🔗 Client connected: {client_info}")
     
     try:
-        # Initialize streamer if not already created
-        if streamer is None:
-            streamer = ParakeetStreamer()
+        # Initialize streamer with thread safety
+        with streamer_lock:
+            if streamer is None:
+                streamer = OptimizedParakeetStreamer()
         
-        # Start streaming audio to this client
+        # Start streaming
         await streamer.start_streaming(websocket)
         
     except websockets.exceptions.ConnectionClosed:
-        print("🔌 Client disconnected")
+        logger.info(f"🔌 Client disconnected: {client_info}")
     except Exception as e:
-        print(f"❌ Client handling error: {e}")
-        traceback.print_exc()
+        logger.error(f"❌ Client error: {e}")
+        logger.error(traceback.format_exc())
     finally:
         if streamer:
             streamer.stop_streaming()
 
 async def main():
-    """Start the WebSocket server"""
-    print("🚀 Starting Parakeet MLX WebSocket server...")
-    print("📡 Listening on ws://127.0.0.1:8765")
-    print("🎯 Ready for Swift fHUD connections")
+    """Start optimized WebSocket server with health monitoring"""
+    logger.info("🚀 Starting Optimized Parakeet MLX Server...")
+    logger.info("📡 Listening on ws://127.0.0.1:8765")
+    logger.info("⚡ Optimizations: Low latency, deduplication, memory management")
     
-    async with websockets.serve(handle_client, "127.0.0.1", 8765):
-        print("✅ Server running. Press Ctrl+C to stop.")
-        await asyncio.Future()  # Run forever
+    # Server configuration
+    server_config = {
+        "max_size": 2 ** 20,  # 1MB max message size
+        "max_queue": 32,      # Max queued messages
+        "read_limit": 2 ** 16,  # 64KB read limit
+        "write_limit": 2 ** 16,  # 64KB write limit
+    }
+    
+    async with websockets.serve(handle_client, "127.0.0.1", 8765, **server_config):
+        logger.info("✅ Server running. Press Ctrl+C to stop.")
+        
+        # Keep server running
+        try:
+            await asyncio.Future()
+        except asyncio.CancelledError:
+            logger.info("🛑 Server shutdown requested")
 
 if __name__ == "__main__":
     try:
+        # Run with proper event loop
         asyncio.run(main())
     except KeyboardInterrupt:
-        print("\n👋 Shutting down server...")
+        logger.info("\n👋 Shutting down server gracefully...")
     except Exception as e:
-        print(f"❌ Server error: {e}")
-        traceback.print_exc()
+        logger.error(f"❌ Server error: {e}")
+        logger.error(traceback.format_exc())

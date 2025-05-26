@@ -16,10 +16,18 @@ from collections import deque
 import threading
 from queue import Queue
 import traceback
+from multiprocessing import shared_memory, Lock
 
 # MLX imports - using correct model names
 import mlx.core as mx
 from parakeet_mlx import from_pretrained
+
+# Shared‐memory setup
+SHM_NAME = "tc_rb"
+SHM_SIZE = 64 * 1024
+shm = shared_memory.SharedMemory(name=SHM_NAME, create=True, size=SHM_SIZE)
+buf = shm.buf
+shm_lock = Lock()
 
 class SharedMemoryAudioBuffer:
     """High-performance shared memory buffer for audio streaming"""
@@ -225,8 +233,26 @@ class OptimizedParakeetStreamer:
                                 "t": word_data['timestamp'] - time.time(),
                                 "c": word_data['confidence']
                             }
-                            await websocket.send(json.dumps(message, separators=(',', ':')))
-                            
+                            # -- write to shared ring buffer --
+                            data = message['w'].encode('utf-8')
+                            length = len(data)
+                            with shm_lock:
+                                head, tail = struct.unpack_from("II", buf, 0)
+                                capacity = SHM_SIZE - 8
+                                if length > capacity:
+                                    data = data[-capacity:]
+                                    length = capacity
+                                write_pos = head
+                                end_pos = write_pos + length
+                                if end_pos <= capacity:
+                                    buf[8+write_pos:8+end_pos] = data
+                                else:
+                                    first = capacity - write_pos
+                                    buf[8+write_pos:8+write_pos+first] = data[:first]
+                                    buf[8:8+(length-first)] = data[first:]
+                                new_head = (head + length) % capacity
+                                struct.pack_into("I", buf, 0, new_head)
+
                         except websockets.exceptions.ConnectionClosed:
                             print("🔌 Connection closed")
                             break

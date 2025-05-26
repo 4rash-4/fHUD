@@ -3,9 +3,9 @@
 // Fixed version with proper memory management and error handling
 
 import Combine
+import CoreIPC // <-- add import for the new module
 import Foundation
 import Network
-import CoreIPC  // <-- add import for the new module
 
 /// Enhanced bridge that handles real-time Parakeet transcription and Gemma concept extraction
 @MainActor
@@ -39,7 +39,7 @@ final class ASRBridge: ObservableObject {
             ringBuffer = reader
             ringCancellable = reader.publisher
                 .receive(on: DispatchQueue.main)
-                .sink { [weak self] text in
+                .sink { [weak self] _ in
                     // Forward transcript text as needed
                     // For example, you might call a method to process the transcript:
                     // await self?.processTranscriptionEvent(text)
@@ -292,11 +292,11 @@ final class ASRBridge: ObservableObject {
         // Listen for JSON control frames (e.g., "pause", "resume", "calibrate")
         webSocket?.receive { [weak self] result in
             switch result {
-            case .success(.string(let json)):
+            case let .success(.string(json)):
                 // Handle control frame
                 // self?.handleControlFrame(json)
                 break
-            case .failure(let err):
+            case let .failure(err):
                 print("WS control error:", err)
             default:
                 break

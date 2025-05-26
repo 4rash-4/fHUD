@@ -1,6 +1,6 @@
-import Foundation
 import Combine
 import Darwin
+import Foundation
 
 /// A 64 KB POSIX shared‐memory ring buffer with head/tail at bytes 0–7.
 /// Swift side reads new bytes every 16 ms and publishes Strings.
@@ -26,7 +26,8 @@ public final class SharedRingBuffer {
         }
         // 3. mmap
         guard let m = mmap(nil, shmSize, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0),
-              m != MAP_FAILED else {
+              m != MAP_FAILED
+        else {
             print("SharedRingBuffer: mmap failed")
             return nil
         }

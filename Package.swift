@@ -5,13 +5,13 @@ let package = Package(
     name: "fHUD",
     platforms: [.macOS(.v13)],
     products: [
-        .executable(name: "fHUD", targets: ["fHUD"])
+        .executable(name: "fHUD", targets: ["fHUD"]),
     ],
     dependencies: [],
     targets: [
         .executableTarget(
             name: "fHUD",
             path: "Sources"
-        )
+        ),
     ]
 )

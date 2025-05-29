@@ -205,7 +205,7 @@ class AnimationEngine: ObservableObject {
         .thought: 0.98,
         .connection: 0.95,
         .drift: 0.92,
-        .crystallization: 0.96
+        .crystallization: 0.96,
     ]
 
     // Optimize particle physics
@@ -516,14 +516,14 @@ class AnimationEngine: ObservableObject {
 
     private func getCurrentMemoryUsage() -> Double {
         var info = mach_task_basic_info()
-        var count = mach_msg_type_number_t(MemoryLayout<mach_task_basic_info>.size)/4
+        var count = mach_msg_type_number_t(MemoryLayout<mach_task_basic_info>.size) / 4
 
         let kerr: kern_return_t = withUnsafeMutablePointer(to: &info) {
             $0.withMemoryRebound(to: integer_t.self, capacity: 1) {
                 task_info(mach_task_self_,
-                         task_flavor_t(MACH_TASK_BASIC_INFO),
-                         $0,
-                         &count)
+                          task_flavor_t(MACH_TASK_BASIC_INFO),
+                          $0,
+                          &count)
             }
         }
 
@@ -565,7 +565,7 @@ class AnimationEngine: ObservableObject {
 
     // Example usage in animation update:
     private func updateParticles() {
-        for i in 0..<particleBuffer.count {
+        for i in 0 ..< particleBuffer.count {
             // ... update logic ...
             // When a particle is no longer needed:
             // particlePool.release(particleBuffer[i])

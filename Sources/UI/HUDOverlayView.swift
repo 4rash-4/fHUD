@@ -2,9 +2,9 @@
 
 // Minimal on-screen overlay showing transcript & drift cues.
 
-import SwiftUI
 import Combine
 import CoreIPC
+import SwiftUI
 
 public struct HUDOverlayView: View {
     @EnvironmentObject var mic: MicPipeline
@@ -66,7 +66,7 @@ public struct HUDOverlayView: View {
                     .cornerRadius(6)
                     .transition(
                         .move(edge: .bottom)
-                        .combined(with: .opacity)
+                            .combined(with: .opacity)
                     )
                     .padding(.bottom, 24)
                     .onAppear {

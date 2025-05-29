@@ -12,7 +12,7 @@ public final class PauseDetector {
 
     public init(threshold: TimeInterval = 0.3) {
         self.threshold = threshold
-        self.thresholdComparison = threshold * 0.98  // 2% hysteresis
+        thresholdComparison = threshold * 0.98 // 2% hysteresis
     }
 
     /// Call whenever a new word *finishes* (timestamp = audio time).

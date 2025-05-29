@@ -17,7 +17,7 @@ public final class RingBuffer<Element> {
 
     public init(capacity: Int) {
         self.capacity = capacity
-        self.buffer = Array(repeating: nil, count: capacity)
+        buffer = Array(repeating: nil, count: capacity)
     }
 
     @discardableResult
@@ -59,7 +59,7 @@ public final class RingBuffer<Element> {
             result.reserveCapacity(count)
 
             var index = head
-            for _ in 0..<count {
+            for _ in 0 ..< count {
                 if let element = buffer[index] {
                     result.append(element)
                 }
@@ -78,7 +78,7 @@ public final class RingBuffer<Element> {
             result.reserveCapacity(actualN)
 
             var index = (tail - actualN + capacity) % capacity
-            for _ in 0..<actualN {
+            for _ in 0 ..< actualN {
                 if let element = buffer[index] {
                     result.append(element)
                 }

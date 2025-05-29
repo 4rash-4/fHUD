@@ -61,7 +61,7 @@ struct AmbientDisplayView: View {
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didReceiveMemoryWarningNotification)) { _ in
             animationEngine.handleMemoryPressure()
         }
-        .onReceive(/* ... */) { _ in
+        .onReceive( /* ... */ ) { _ in
             // Batch updates for performance
             withTransaction(Transaction(animation: nil)) {
                 self.updateViews()

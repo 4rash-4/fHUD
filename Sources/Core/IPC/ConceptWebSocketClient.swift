@@ -1,5 +1,5 @@
-import Foundation
 import Combine
+import Foundation
 
 /// v1 Message contract for versioning and payload typing
 public struct MessageContract<T: Codable>: Codable {
@@ -39,7 +39,7 @@ public final class ConceptWebSocketClient {
             switch result {
             case .failure:
                 self.scheduleReconnect()
-            case .success(.string(let text)):
+            case let .success(.string(text)):
                 self.decodeAndPublish(text)
                 self.receive()
             default:

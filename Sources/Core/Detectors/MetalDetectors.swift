@@ -85,6 +85,7 @@ class MetalDriftDetector {
     }
 
     // MARK: - Optimized Metal Buffer Updates
+
     private func processAudioChunk(_ buffer: [Float]) {
         // Reuse existing buffers instead of reallocating
         audioBuffer?.contents().copyMemory(from: buffer, byteCount: bufferSize * MemoryLayout<Float>.size)

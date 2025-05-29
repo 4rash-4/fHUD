@@ -4,6 +4,7 @@
 
 import Combine
 import CoreIPC // <-- add import for the new module
+
 // Remove: import CoreIPC
 // Add standard imports:
 import Foundation
@@ -35,6 +36,7 @@ final class ASRBridge: ObservableObject {
             }
         }
     }
+
     @Published var thoughtConnections: [ThoughtConnection] = []
 
     private var conceptBuffer: [String] = []
@@ -116,6 +118,7 @@ final class ASRBridge: ObservableObject {
     }
 
     // MARK: - Optimized WebSocket Handling
+
     private let decodingQueue = DispatchQueue(label: "ASRBridge.decoding", qos: .userInitiated, attributes: .concurrent)
 
     private func processTranscriptionEvent(_ text: String) {
@@ -205,7 +208,7 @@ final class ASRBridge: ObservableObject {
                     emotionalTone: dict.emotionalTone
                 )
             }
-            self.recentConcepts.append(contentsOf: concepts)
+            recentConcepts.append(contentsOf: concepts)
         case "connections":
             let connections = event.connections.compactMap { dict -> ThoughtConnection? in
                 ThoughtConnection(
@@ -215,7 +218,7 @@ final class ASRBridge: ObservableObject {
                     createdAt: Date()
                 )
             }
-            self.thoughtConnections = connections
+            thoughtConnections = connections
         default:
             break
         }
@@ -324,10 +327,10 @@ final class ASRBridge: ObservableObject {
     private func receiveMessage() {
         webSocketTask?.receive { [weak self] result in
             switch result {
-            case .success(_):
+            case .success:
                 // ...handle message...
                 self?.receiveMessage()
-            case .failure(_):
+            case .failure:
                 self?.handleDisconnection()
             }
         }

@@ -33,95 +33,17 @@ struct AmbientDisplayView: View {
 
                 // Ambient concept flow
                 conceptFlowLayer(geometry)
+                    .drawingGroup()
 
                 // Connection visualization
                 connectionLayer(geometry)
+                    .drawingGroup()
 
                 // Gentle drift indicators (top-right)
                 driftIndicatorLayer(geometry)
 
                 // Live transcript (bottom, minimal)
                 transcriptLayer(geometry)
-            }
-
-            struct ConceptParticleView: View {
-                let particle: ConceptParticle
-
-                private let amberGlow = Color(red: 0.96, green: 0.65, blue: 0.14)
-
-                var body: some View {
-                    Text(particle.text)
-                        .font(.system(size: 10, weight: .medium, design: .rounded))
-                        .foregroundColor(amberGlow)
-                        .padding(.horizontal, 6)
-                        .padding(.vertical, 3)
-                        .background(
-                            Capsule()
-                                .fill(amberGlow.opacity(0.1))
-                                .overlay(
-                                    Capsule()
-                                        .stroke(amberGlow.opacity(0.3), lineWidth: 0.5)
-                                )
-                        )
-                        .shadow(color: amberGlow.opacity(0.3), radius: 4)
-                }
-            }
-
-            struct ConnectionLineView: Shape {
-                let line: ConnectionLine
-
-                func path(in _: CGRect) -> Path {
-                    var path = Path()
-                    path.move(to: line.from)
-
-                    // Curved connection line
-                    let controlPoint = CGPoint(
-                        x: (line.from.x + line.to.x) / 2,
-                        y: min(line.from.y, line.to.y) - 20
-                    )
-
-                    path.addQuadCurve(to: line.to, control: controlPoint)
-                    return path
-                }
-            }
-
-            struct DriftIndicator: View {
-                let icon: String
-                let color: Color
-                let intensity: Float
-
-                var body: some View {
-                    Image(systemName: icon)
-                        .font(.system(size: 12, weight: .medium))
-                        .foregroundColor(color)
-                        .scaleEffect(0.8 + CGFloat(intensity * 0.4))
-                        .opacity(0.6 + Double(intensity * 0.4))
-                        .shadow(color: color.opacity(0.5), radius: 2)
-                }
-            }
-
-            // MARK: - Data Models
-
-            struct ConceptParticle: Identifiable {
-                let id: UUID
-                let text: String
-                let category: ConceptCategory
-                var position: CGPoint
-                let velocity: CGPoint
-                var opacity: Double
-                var scale: Double
-                let createdAt: Date
-                let lifespan: TimeInterval
-                let animationDuration: TimeInterval
-            }
-
-            struct ConnectionLine: Identifiable {
-                let id: UUID
-                let from: CGPoint
-                let to: CGPoint
-                let strength: Float
-                var opacity: Double
-                let createdAt: Date
             }
         }
         .onAppear {
@@ -138,6 +60,12 @@ struct AmbientDisplayView: View {
         }
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didReceiveMemoryWarningNotification)) { _ in
             animationEngine.handleMemoryPressure()
+        }
+        .onReceive(/* ... */) { _ in
+            // Batch updates for performance
+            withTransaction(Transaction(animation: nil)) {
+                self.updateViews()
+            }
         }
     }
 
@@ -161,8 +89,13 @@ struct AmbientDisplayView: View {
     // MARK: - Concept Flow Visualization
 
     private func conceptFlowLayer(_: GeometryProxy) -> some View {
-        ForEach(conceptParticles) { particle in
-            ConceptParticleView(particle: particle)
+        // Use LazyVStack for long lists
+        LazyVStack {
+            ForEach(conceptParticles) { particle in
+                // Use EquatableView for expensive components
+                EquatableView(content: {
+                    ConceptParticleView(particle: particle)
+                })
                 .position(particle.position)
                 .opacity(particle.opacity)
                 .scaleEffect(particle.scale)
@@ -171,6 +104,7 @@ struct AmbientDisplayView: View {
                         .repeatForever(autoreverses: true),
                     value: particle.scale
                 )
+            }
         }
     }
 
@@ -368,6 +302,11 @@ struct AmbientDisplayView: View {
 
     private func getRecentTranscript() -> String {
         return mic.getRecentWords(count: 15).joined(separator: " ")
+    }
+
+    private func updateViews() {
+        // This function can be used to batch update any view-related state
+        // For example, you could update the position of particles or the opacity of connections here
     }
 }
 

@@ -15,10 +15,19 @@ from queue import Queue, Empty
 import traceback
 import logging
 from typing import Set, Dict, List, Optional, Tuple
+import os
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+# -- Stub for fast smoke tests --
+class ParakeetServerStub:
+    """Yields canned transcripts without loading any model."""
+    async def stream_transcripts(self):
+        for text in ["[STUB] Hello world", "[STUB] Testing 1-2-3"]:
+            yield text
+            await asyncio.sleep(0.5)
 
 # MLX imports
 import mlx.core as mx
@@ -46,10 +55,16 @@ class OptimizedParakeetStreamer:
         self.context_size = (256, 256)
         self.depth = 2
         
-        # Audio buffer management
-        self.audio_buffer = deque(maxlen=int(self.sample_rate * 10))  # 10s max buffer
-        self.processing_queue = Queue(maxsize=5)  # Limit queue size
+        # Audio buffer management with strict limits
+        self.max_buffer_size = int(self.sample_rate * 10)
+        self.audio_buffer = np.zeros(self.max_buffer_size, dtype=np.float32)
+        self.buffer_write_ptr = 0
+        self.buffer_length = 0
+        self.processing_queue = Queue(maxsize=3)  # Reduced from 5 to 3 for tighter control
         self.is_streaming = False
+
+        # Add memory monitoring
+        self.buffer_overflow_count = 0
         
         # Deduplication with time window
         self.sent_words: Dict[str, float] = {}  # word_id -> timestamp
@@ -65,39 +80,52 @@ class OptimizedParakeetStreamer:
         self.buffer_lock = threading.Lock()
         
     def audio_callback(self, indata, frames, time_info, status):
-        """Optimized audio callback with minimal processing"""
+        """Optimized audio callback with numpy ring buffer"""
         if status:
             logger.warning(f"⚠️  Audio callback status: {status}")
-        
-        # Convert to float32 and add to buffer with lock
-        audio_chunk = indata[:, 0].astype(np.float32)
-        
+        audio_chunk = indata[:, 0].astype(np.float32, copy=False)
+        chunk_len = len(audio_chunk)
         with self.buffer_lock:
-            self.audio_buffer.extend(audio_chunk)
-        
+            # Calculate available space
+            available = self.max_buffer_size - self.buffer_length
+            if chunk_len > available:
+                # Drop oldest samples to make room
+                drop = chunk_len - available
+                self.buffer_length -= drop
+                self.buffer_write_ptr = (self.buffer_write_ptr + drop) % self.max_buffer_size
+                self.buffer_overflow_count += 1
+                if self.buffer_overflow_count % 100 == 0:
+                    logger.warning(f"⚠️  Audio buffer overflow #{self.buffer_overflow_count}")
+            # Write new samples
+            end_ptr = (self.buffer_write_ptr + self.buffer_length) % self.max_buffer_size
+            first_part = min(chunk_len, self.max_buffer_size - end_ptr)
+            self.audio_buffer[end_ptr:end_ptr+first_part] = audio_chunk[:first_part]
+            if chunk_len > first_part:
+                self.audio_buffer[0:chunk_len-first_part] = audio_chunk[first_part:]
+            self.buffer_length = min(self.buffer_length + chunk_len, self.max_buffer_size)
         # Trigger processing only when we have enough data
-        current_buffer_size = len(self.audio_buffer)
-        if current_buffer_size >= self.chunk_samples:
+        if self.buffer_length >= self.chunk_samples:
             try:
-                # Non-blocking put
                 self.processing_queue.put_nowait(time.time())
             except:
-                pass  # Queue full, skip this trigger
+                pass
                 
     def process_audio_chunk(self) -> List[Dict]:
         """Process audio chunk with streaming context"""
         with self.buffer_lock:
-            if len(self.audio_buffer) < self.chunk_samples:
+            if self.buffer_length < self.chunk_samples:
                 return []
             
             # Extract chunk
-            audio_array = np.array(list(self.audio_buffer))[:self.chunk_samples]
+            audio_array = np.array(self.audio_buffer, copy=False)[:self.chunk_samples]
             
             # Remove processed samples, keeping overlap
             overlap_samples = int(self.sample_rate * self.overlap_duration)
             for _ in range(self.chunk_samples - overlap_samples):
-                if self.audio_buffer:
-                    self.audio_buffer.popleft()
+                if self.audio_buffer.size > 0:
+                    self.audio_buffer = np.roll(self.audio_buffer, -1)
+                    self.audio_buffer[-1] = 0
+                    self.buffer_length -= 1
         
         # Convert to MLX
         audio_mx = mx.array(audio_array, dtype=mx.float32)
@@ -317,3 +345,9 @@ if __name__ == "__main__":
     except Exception as e:
         logger.error(f"❌ Server error: {e}")
         logger.error(traceback.format_exc())
+        
+# Alias for main_server.py compatibility and stub support
+if os.getenv("TC_ASR_STUB", "0") == "1":
+    ParakeetServer = ParakeetServerStub
+else:
+    ParakeetServer = OptimizedParakeetStreamer

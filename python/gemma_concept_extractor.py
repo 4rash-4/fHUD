@@ -10,11 +10,15 @@ from dataclasses import dataclass, asdict
 import re
 import sqlite3
 from pathlib import Path
+import os
+import logging
 
 # MLX imports
 import mlx.core as mx
 import mlx.nn as nn
 from mlx_lm import load, generate
+
+logger = logging.getLogger(__name__)
 
 @dataclass
 class ConceptNode:
@@ -208,42 +212,73 @@ JSON:"""
                 # Build connections with recent concepts
                 self._build_connections(concept_id, concept.timestamp)
 
-    def _build_connections(self, concept_id: int, timestamp: float):
-        """Build connections between concepts mentioned within a time window"""
-        # Find concepts mentioned in the last 5 minutes
+    def _store_concept_in_db(self, concept: ConceptNode) -> int:
+        """Store concept with explicit transaction handling"""
         with sqlite3.connect(self.db_path) as conn:
-            recent_concepts = conn.execute(
-                """SELECT id FROM concepts 
-                   WHERE timestamp > ? AND id != ?""",
-                (timestamp - 300, concept_id)  # 5 minutes window
-            ).fetchall()
-            
-            # Create connections
-            for (other_id,) in recent_concepts:
-                # Check if connection already exists
-                existing = conn.execute(
-                    """SELECT strength FROM connections 
-                       WHERE (concept1_id = ? AND concept2_id = ?) 
-                          OR (concept1_id = ? AND concept2_id = ?)""",
-                    (concept_id, other_id, other_id, concept_id)
-                ).fetchone()
+            try:
+                cursor = conn.cursor()
+                cursor.execute(
+                    """INSERT INTO concepts (text, category, confidence, timestamp, 
+                                           context, emotional_tone, mention_count)
+                       VALUES (?, ?, ?, ?, ?, ?, 1)""",
+                    (concept.text, concept.category, concept.confidence, 
+                     concept.timestamp, concept.context, concept.emotional_tone)
+                )
+                concept_id = cursor.lastrowid
+                conn.commit()  # Explicit commit
+                return concept_id
+            except Exception as e:
+                conn.rollback()  # Explicit rollback on error
+                logger.error(f"Failed to store concept: {e}")
+                raise
+
+    def _build_connections(self, concept_id: int, concept_text: str, timestamp: float):
+        """Build connections with explicit transaction handling"""
+        with sqlite3.connect(self.db_path) as conn:
+            try:
+                # Get recent concepts for connection building
+                recent_concepts = conn.execute(
+                    """SELECT id, text FROM concepts 
+                       WHERE timestamp > ? AND id != ?
+                       ORDER BY timestamp DESC LIMIT 10""",
+                    (timestamp - 300, concept_id)  # 5 minutes window
+                ).fetchall()
                 
-                if existing:
-                    # Strengthen existing connection
-                    new_strength = min(existing[0] + 0.1, 1.0)
-                    conn.execute(
-                        """UPDATE connections SET strength = ? 
-                           WHERE (concept1_id = ? AND concept2_id = ?) 
-                              OR (concept1_id = ? AND concept2_id = ?)""",
-                        (new_strength, concept_id, other_id, other_id, concept_id)
-                    )
-                else:
-                    # Create new connection
-                    conn.execute(
-                        """INSERT INTO connections (concept1_id, concept2_id, strength, created_at)
-                           VALUES (?, ?, ?, ?)""",
-                        (concept_id, other_id, 0.3, timestamp)
-                    )
+                # Build connections
+                for other_id, other_text in recent_concepts:
+                    similarity = self._calculate_similarity(concept_text, other_text)
+                    if similarity > 0.3:
+                        # Check if connection exists
+                        existing = conn.execute(
+                            """SELECT strength FROM connections 
+                               WHERE (concept1_id = ? AND concept2_id = ?) 
+                                  OR (concept1_id = ? AND concept2_id = ?)""",
+                            (concept_id, other_id, other_id, concept_id)
+                        ).fetchone()
+                        
+                        if existing:
+                            # Update existing connection
+                            new_strength = min(existing[0] + 0.1, 1.0)
+                            conn.execute(
+                                """UPDATE connections SET strength = ? 
+                                   WHERE (concept1_id = ? AND concept2_id = ?) 
+                                      OR (concept1_id = ? AND concept2_id = ?)""",
+                                (new_strength, concept_id, other_id, other_id, concept_id)
+                            )
+                        else:
+                            # Create new connection
+                            conn.execute(
+                                """INSERT INTO connections (concept1_id, concept2_id, strength, created_at)
+                                   VALUES (?, ?, ?, ?)""",
+                                (concept_id, other_id, similarity, timestamp)
+                            )
+                
+                conn.commit()  # Explicit commit for all connection operations
+                
+            except Exception as e:
+                conn.rollback()  # Explicit rollback on error
+                logger.error(f"Failed to build connections: {e}")
+                raise
 
     def get_recent_concepts(self, minutes: int = 60) -> List[Dict]:
         """Get concepts mentioned in the last N minutes"""
@@ -292,6 +327,64 @@ JSON:"""
                 for row in connections
             ]
 
+# Define GemmaExtractor for stub & real modes
+if os.getenv("TC_ASR_STUB", "0") == "1":
+    class GemmaExtractor:
+        def extract_from_text(self, transcript: str) -> List[str]:
+            # Stub mode: emit one dummy concept for testing
+            return ["stub_concept"]
+else:
+    class GemmaExtractor:
+        def __init__(self):
+            # Initialize Gemma-3 model
+            try:
+                from mlx_lm import load, generate
+                self.model, self.tokenizer = load("mlx-community/gemma-3-1b-it-qat-4bit")
+                print("✅ Gemma model loaded for concept extraction")
+            except Exception as e:
+                print(f"❌ Failed to load Gemma model: {e}")
+                self.model = None
+                self.tokenizer = None
+
+        def extract_from_text(self, transcript: str) -> List[str]:
+            """Extract concepts using Gemma-3 model"""
+            if not self.model or not self.tokenizer:
+                # Fallback to simple keyword extraction
+                return self._fallback_extraction(transcript)
+            
+            try:
+                # Create prompt for concept extraction
+                prompt = f"""Extract key concepts from this speech transcript. Return only the main concepts as a comma-separated list:
+                
+                Transcript: "{transcript}"
+                
+                Concepts:"""
+                
+                # Generate response
+                from mlx_lm import generate
+                response = generate(
+                    self.model, 
+                    self.tokenizer, 
+                    prompt=prompt, 
+                    max_tokens=100,
+                    temp=0.3
+                )
+                
+                # Parse concepts from response
+                concepts = [c.strip() for c in response.split(',') if c.strip()]
+                return concepts[:5]  # Limit to 5 concepts
+                
+            except Exception as e:
+                print(f"❌ Gemma extraction failed: {e}")
+                return self._fallback_extraction(transcript)
+        
+        def _fallback_extraction(self, transcript: str) -> List[str]:
+            """Simple keyword-based fallback extraction"""
+            import re
+            # Extract potential concepts (nouns, proper nouns)
+            words = re.findall(r'\b[A-Z][a-z]+\b|\b(?:project|task|idea|plan|meeting|work)\b', transcript)
+            return list(set(words))[:3]  # Return unique concepts, max 3
+
 # Example usage and testing
 if __name__ == "__main__":
     async def test_extraction():
@@ -312,3 +405,14 @@ if __name__ == "__main__":
     
     import asyncio
     asyncio.run(test_extraction())
+
+def extract_concepts(transcript: str) -> List[str]:
+    """
+    Wrapper for Gemma-3 concept extraction.
+    Input: raw transcript string.
+    Output: list of extracted concept strings.
+    """
+    # Replace the following with your actual extraction call:
+    # e.g. concepts = GemmaExtractor().get_concepts(transcript)
+    concepts = GemmaExtractor().extract_from_text(transcript)
+    return concepts

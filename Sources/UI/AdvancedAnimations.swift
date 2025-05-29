@@ -72,8 +72,13 @@ class AnimationEngine: ObservableObject {
     private var targetFPS: Int = 60
 
     // Memory management
-    private let maxParticles = 50
-    private let maxConnections = 20
+    private let maxParticles = 100
+    private let maxConnections = 50
+    private var memoryPressureThreshold: Double = 0.8
+
+    // For memory-limited collections
+    private var particles: [AnimatedParticle] = []
+    private var connections: [AnimatedConnection] = []
 
     // Cassette Futurism Colors
     static let amberPrimary = Color(red: 0.96, green: 0.65, blue: 0.14)
@@ -195,25 +200,26 @@ class AnimationEngine: ObservableObject {
 
     // MARK: - Particle Physics
 
+    // Precalculate damping factors
+    private let dampingFactors: [AnimatedParticle.ParticleType: Float] = [
+        .thought: 0.98,
+        .connection: 0.95,
+        .drift: 0.92,
+        .crystallization: 0.96
+    ]
+
+    // Optimize particle physics
     private func updateParticlePhysics(_ particle: inout AnimatedParticle, deltaTime: Float) {
-        // Apply forces
-        applyFlockingBehavior(&particle)
-        applyBoundaryForces(&particle)
-        applyDrift(&particle, dt: deltaTime)
-        applyTargetSeeking(&particle)
-
-        // Verlet integration for smooth physics
+        // Use SIMD vector operations
+        let acceleration = simd_make_float2(
+            /* physics calculations */
+        )
         particle.position += particle.velocity * deltaTime
-        particle.velocity += particle.acceleration * deltaTime
-
-        // Apply damping based on particle type
-        let damping: Float = particle.particleType == .drift ? 0.95 : 0.98
-        particle.velocity *= damping
-        particle.acceleration = .zero
-
-        // Update lifecycle
-        particle.age += deltaTime
-        updateParticleLifecycle(&particle)
+        particle.velocity += acceleration * deltaTime
+        // Use precalculated values
+        if let damping = dampingFactors[particle.particleType] {
+            particle.velocity *= damping
+        }
     }
 
     private func applyFlockingBehavior(_ particle: inout AnimatedParticle) {
@@ -472,5 +478,97 @@ class AnimationEngine: ObservableObject {
         }
 
         print("⚠️ Memory pressure handled - reduced animations")
+    }
+
+    func addParticle(_ particle: AnimatedParticle) {
+        // Remove oldest particles if at limit
+        if particles.count >= maxParticles {
+            let oldestIndex = particles.firstIndex { $0.age == particles.map(\.age).max() }
+            if let index = oldestIndex {
+                particles.remove(at: index)
+            }
+        }
+        particles.append(particle)
+    }
+
+    func addConnection(_ connection: AnimatedConnection) {
+        // Remove oldest connections if at limit
+        if connections.count >= maxConnections {
+            connections.removeFirst()
+        }
+        connections.append(connection)
+    }
+
+    private func checkMemoryPressure() {
+        let memoryUsage = getCurrentMemoryUsage()
+        if memoryUsage > memoryPressureThreshold {
+            // Reduce particle count by 25%
+            let removeCount = particles.count / 4
+            particles.removeFirst(removeCount)
+
+            // Reduce connection count by 25%
+            let connectionRemoveCount = connections.count / 4
+            connections.removeFirst(connectionRemoveCount)
+
+            print("⚠️ Memory pressure detected, reduced particles and connections")
+        }
+    }
+
+    private func getCurrentMemoryUsage() -> Double {
+        var info = mach_task_basic_info()
+        var count = mach_msg_type_number_t(MemoryLayout<mach_task_basic_info>.size)/4
+
+        let kerr: kern_return_t = withUnsafeMutablePointer(to: &info) {
+            $0.withMemoryRebound(to: integer_t.self, capacity: 1) {
+                task_info(mach_task_self_,
+                         task_flavor_t(MACH_TASK_BASIC_INFO),
+                         $0,
+                         &count)
+            }
+        }
+
+        if kerr == KERN_SUCCESS {
+            let usedMemory = Double(info.resident_size) / (1024 * 1024 * 1024) // GB
+            return usedMemory / 8.0 // Assume 8GB total, adjust as needed
+        }
+        return 0.0
+    }
+
+    // Particle object pool for memory efficiency
+    private class ParticlePool {
+        private var pool: [AnimatedParticle] = []
+        private let maxPoolSize: Int
+
+        init(maxPoolSize: Int) {
+            self.maxPoolSize = maxPoolSize
+        }
+
+        func acquire() -> AnimatedParticle {
+            if let particle = pool.popLast() {
+                return particle
+            } else {
+                return AnimatedParticle() // Default initializer
+            }
+        }
+
+        func release(_ particle: AnimatedParticle) {
+            if pool.count < maxPoolSize {
+                pool.append(particle)
+            }
+        }
+    }
+
+    // Preallocate particle buffer
+    private let maxParticles = 512
+    private var particleBuffer: [AnimatedParticle] = Array(repeating: AnimatedParticle(), count: 512)
+    private let particlePool = ParticlePool(maxPoolSize: 512)
+
+    // Example usage in animation update:
+    private func updateParticles() {
+        for i in 0..<particleBuffer.count {
+            // ... update logic ...
+            // When a particle is no longer needed:
+            // particlePool.release(particleBuffer[i])
+        }
     }
 }

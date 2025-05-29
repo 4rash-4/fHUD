@@ -4,6 +4,8 @@
 
 import Combine
 import CoreIPC // <-- add import for the new module
+// Remove: import CoreIPC
+// Add standard imports:
 import Foundation
 import Network
 
@@ -17,12 +19,22 @@ final class ASRBridge: ObservableObject {
     private var cancellables = Set<AnyCancellable>()
 
     // Reconnection handling
-    private var reconnectTimer: Timer?
     private var reconnectAttempts = 0
     private let maxReconnectAttempts = 5
+    private var reconnectTimer: Timer?
+    private var isReconnecting = false
+    private var webSocketTask: URLSessionWebSocketTask?
 
     // Concept processing
-    @Published var recentConcepts: [ConceptNode] = []
+    // Use Combine for efficient state management
+    @Published var recentConcepts: [ConceptNode] = [] {
+        didSet {
+            // Limit to last 20 items
+            if recentConcepts.count > 20 {
+                recentConcepts = Array(recentConcepts.suffix(20))
+            }
+        }
+    }
     @Published var thoughtConnections: [ThoughtConnection] = []
 
     private var conceptBuffer: [String] = []
@@ -103,33 +115,29 @@ final class ASRBridge: ObservableObject {
         }
     }
 
-    private func processTranscriptionEvent(_ text: String) async {
-        do {
-            guard let data = text.data(using: .utf8) else {
-                print("⚠️ Failed to convert text to data")
-                return
+    // MARK: - Optimized WebSocket Handling
+    private let decodingQueue = DispatchQueue(label: "ASRBridge.decoding", qos: .userInitiated, attributes: .concurrent)
+
+    private func processTranscriptionEvent(_ text: String) {
+        decodingQueue.async { [weak self] in
+            guard let self,
+                  let data = text.data(using: .utf8),
+                  let event = try? JSONDecoder().decode(TranscriptionEvent.self, from: data)
+            else { return }
+            Task { @MainActor in
+                await self.mic?.ingest(word: event.w, at: event.t)
+                // Buffer for concept extraction
+                self.conceptBuffer.append(event.w)
+                if self.conceptBuffer.count > self.conceptBufferLimit {
+                    self.conceptBuffer.removeFirst()
+                }
+                // Trigger concept extraction periodically
+                let now = Date()
+                if now.timeIntervalSince(self.lastConceptExtraction) > 5.0 && self.conceptBuffer.count >= 10 {
+                    await self.requestConceptExtraction()
+                    self.lastConceptExtraction = now
+                }
             }
-
-            let event = try JSONDecoder().decode(TranscriptionEvent.self, from: data)
-
-            // Feed word to main pipeline
-            await mic?.ingest(word: event.w, at: event.t)
-
-            // Buffer for concept extraction
-            conceptBuffer.append(event.w)
-            if conceptBuffer.count > conceptBufferLimit {
-                conceptBuffer.removeFirst()
-            }
-
-            // Trigger concept extraction periodically
-            let now = Date()
-            if now.timeIntervalSince(lastConceptExtraction) > 5.0 && conceptBuffer.count >= 10 {
-                await requestConceptExtraction()
-                lastConceptExtraction = now
-            }
-
-        } catch {
-            print("🔥 Failed to decode transcription event: \(error)")
         }
     }
 
@@ -171,51 +179,45 @@ final class ASRBridge: ObservableObject {
         }
     }
 
-    private func processConceptEvent(_ text: String) async {
-        do {
-            guard let data = text.data(using: .utf8) else {
-                print("⚠️ Failed to convert concept text to data")
-                return
+    // Optimize WebSocket handling for concept events
+    private func processConceptEvent(_ text: String) {
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            guard let data = text.data(using: .utf8) else { return }
+            // Decode on background thread
+            guard let event = try? JSONDecoder().decode(ConceptEvent.self, from: data) else { return }
+            DispatchQueue.main.async {
+                self?.handleConceptEvent(event)
             }
+        }
+    }
 
-            let event = try JSONDecoder().decode(ConceptEvent.self, from: data)
-
-            switch event.type {
-            case "concepts":
-                let concepts = event.concepts.compactMap { dict -> ConceptNode? in
-                    ConceptNode(
-                        text: dict.text,
-                        category: ConceptCategory(rawValue: dict.category) ?? .task,
-                        confidence: Float(dict.confidence),
-                        timestamp: Date(),
-                        emotionalTone: dict.emotionalTone
-                    )
-                }
-
-                // Update recent concepts (keep last 20)
-                recentConcepts.append(contentsOf: concepts)
-                if recentConcepts.count > 20 {
-                    recentConcepts.removeFirst(recentConcepts.count - 20)
-                }
-
-            case "connections":
-                let connections = event.connections.compactMap { dict -> ThoughtConnection? in
-                    ThoughtConnection(
-                        from: dict.from,
-                        to: dict.to,
-                        strength: Float(dict.strength),
-                        createdAt: Date()
-                    )
-                }
-
-                thoughtConnections = connections
-
-            default:
-                break
+    // Add a new handler for concept events to update recentConcepts and thoughtConnections
+    private func handleConceptEvent(_ event: ConceptEvent?) {
+        guard let event = event else { return }
+        switch event.type {
+        case "concepts":
+            let concepts = event.concepts.compactMap { dict -> ConceptNode? in
+                ConceptNode(
+                    text: dict.text,
+                    category: ConceptCategory(rawValue: dict.category) ?? .task,
+                    confidence: Float(dict.confidence),
+                    timestamp: Date(),
+                    emotionalTone: dict.emotionalTone
+                )
             }
-
-        } catch {
-            print("🔥 Failed to decode concept event: \(error)")
+            self.recentConcepts.append(contentsOf: concepts)
+        case "connections":
+            let connections = event.connections.compactMap { dict -> ThoughtConnection? in
+                ThoughtConnection(
+                    from: dict.from,
+                    to: dict.to,
+                    strength: Float(dict.strength),
+                    createdAt: Date()
+                )
+            }
+            self.thoughtConnections = connections
+        default:
+            break
         }
     }
 
@@ -258,24 +260,22 @@ final class ASRBridge: ObservableObject {
     // MARK: - Reconnection Logic
 
     private func handleDisconnection(isTranscription: Bool) async {
+        // Cancel immediately instead of waiting for Task.sleep
+        (isTranscription ? webSocket : conceptSocket)?.cancel()
+
         if isTranscription {
             webSocket = nil
         } else {
             conceptSocket = nil
         }
-
         guard reconnectAttempts < maxReconnectAttempts else {
             print("❌ Max reconnection attempts reached. Giving up.")
             return
         }
-
         reconnectAttempts += 1
         let delay = Double(reconnectAttempts) * 2.0 // Exponential backoff
-
         print("🔄 Reconnecting in \(delay) seconds... (attempt \(reconnectAttempts)/\(maxReconnectAttempts))")
-
         try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
-
         if isTranscription {
             await connectToTranscription()
         } else {
@@ -307,6 +307,59 @@ final class ASRBridge: ObservableObject {
 
     // Remove old WebSocket transcript parsing entirely
     // transcripts now come from SharedRingBuffer.publisher
+
+    func connect() {
+        guard !isReconnecting else { return }
+
+        let url = URL(string: "ws://localhost:8765")!
+        var request = URLRequest(url: url)
+        request.timeoutInterval = 10.0
+
+        webSocketTask = URLSession.shared.webSocketTask(with: request)
+        webSocketTask?.resume()
+
+        receiveMessage()
+    }
+
+    private func receiveMessage() {
+        webSocketTask?.receive { [weak self] result in
+            switch result {
+            case .success(_):
+                // ...handle message...
+                self?.receiveMessage()
+            case .failure(_):
+                self?.handleDisconnection()
+            }
+        }
+    }
+
+    private func handleDisconnection() {
+        guard !isReconnecting else { return }
+        isReconnecting = true
+
+        if reconnectAttempts < maxReconnectAttempts {
+            let delay = min(pow(2.0, Double(reconnectAttempts)), 30.0) // Exponential backoff, max 30s
+
+            reconnectTimer = Timer.scheduledTimer(withTimeInterval: delay, repeats: false) { [weak self] _ in
+                self?.reconnectAttempts += 1
+                self?.isReconnecting = false
+                self?.connect()
+            }
+        } else {
+            // Max attempts reached, stop trying
+            isReconnecting = false
+            print("❌ Max reconnection attempts reached")
+        }
+    }
+
+    func disconnect() {
+        reconnectTimer?.invalidate()
+        reconnectTimer = nil
+        reconnectAttempts = 0
+        isReconnecting = false
+        webSocketTask?.cancel(with: .goingAway, reason: nil)
+        webSocketTask = nil
+    }
 }
 
 // MARK: - Fixed Data Models

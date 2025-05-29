@@ -1,0 +1,22 @@
+{
+    "configurations": [
+        {
+            "type": "swift",
+            "request": "launch",
+            "args": [],
+            "cwd": "${workspaceFolder:fHUD}",
+            "name": "Debug fHUD",
+            "program": "${workspaceFolder:fHUD}/.build/debug/fHUD",
+            "preLaunchTask": "swift: Build Debug fHUD"
+        },
+        {
+            "type": "swift",
+            "request": "launch",
+            "args": [],
+            "cwd": "${workspaceFolder:fHUD}",
+            "name": "Release fHUD",
+            "program": "${workspaceFolder:fHUD}/.build/release/fHUD",
+            "preLaunchTask": "swift: Build Release fHUD"
+        }
+    ]
+}

@@ -83,6 +83,14 @@ class MetalDriftDetector {
         resultBuffer = device.makeBuffer(length: 16 * MemoryLayout<Float>.size,
                                          options: .storageModeShared)
     }
+
+    // MARK: - Optimized Metal Buffer Updates
+    private func processAudioChunk(_ buffer: [Float]) {
+        // Reuse existing buffers instead of reallocating
+        audioBuffer?.contents().copyMemory(from: buffer, byteCount: bufferSize * MemoryLayout<Float>.size)
+        // Enqueue once per batch instead of per sample
+        enqueueDetectionKernel()
+    }
 }
 
 // MARK: - Hardware-Accelerated Detector Implementations

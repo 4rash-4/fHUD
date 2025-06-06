@@ -1,9 +1,11 @@
 // MARK: - HUDOverlayView.swift
-
-// Minimal on-screen overlay showing transcript & drift cues.
+//
+// Optional debug overlay that displays the recent transcript and
+// basic drift metrics.  It also subscribes to `ConceptWebSocketClient`
+// to show a small pop up when new concepts are broadcast from the
+// backend.
 
 import Combine
-import CoreIPC
 import SwiftUI
 
 public struct HUDOverlayView: View {

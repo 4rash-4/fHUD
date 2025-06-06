@@ -1,6 +1,8 @@
 // MARK: - RingBuffer.swift
-
-// Thread-safe generic circular buffer for real-time signal data
+//
+// Simple thread‑safe FIFO ring buffer used throughout the project for
+// sliding window calculations.  It is `Sendable` so it can be shared
+// across actor contexts.
 
 import Foundation
 

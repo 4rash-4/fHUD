@@ -1,6 +1,10 @@
 // MARK: - MicPipeline.swift
-
-// Fixed version with thread safety and memory management
+//
+// Core observable object that aggregates raw ASR events and updates the
+// drift detectors.  It stores a rolling transcript, computes pace and
+// exposes high level state for the SwiftUI views.  The pipeline is
+// designed for frequent updates so most work happens off the main
+// thread with results published via `@MainActor`.
 
 import Combine
 import Foundation

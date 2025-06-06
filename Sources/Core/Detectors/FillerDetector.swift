@@ -1,6 +1,9 @@
 // MARK: - FillerDetector.swift
-
-// Counts “um / uh / er / hmm” tokens in a sliding window.
+//
+// Pure Swift fallback detector used when no hardware accelerated
+// implementation is available.  It simply counts common filler words
+// in a ring buffer of recent terms to provide a lightweight measure of
+// attention drift.
 
 import Foundation
 

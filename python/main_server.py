@@ -1,3 +1,9 @@
+"""
+Main Tornado server that ties together the Parakeet ASR pipeline and
+Gemma concept extractor.  It exposes WebSocket endpoints for the Swift
+client and writes transcripts to a shared-memory ring buffer.
+"""
+
 import asyncio
 import json
 import struct

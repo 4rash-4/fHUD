@@ -1,6 +1,9 @@
 // MARK: - AmbientDisplayView.swift
-
-// Beautiful ambient visualization with proper state management
+//
+// Main on‑screen view that renders the flowing concept particles,
+// animated connections and gentle drift cues.  It listens to
+// `ASRBridge` for incoming concepts and updates the animation engine
+// accordingly.
 
 import Combine
 import SwiftUI

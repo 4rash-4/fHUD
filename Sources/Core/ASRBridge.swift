@@ -1,12 +1,15 @@
 // MARK: - ASRBridge.swift
-
-// Fixed version with proper memory management and error handling
+//
+// Bridges the Python back end with the SwiftUI interface.  This class
+// manages two WebSocket connections – one for real‑time transcription
+// and one for concept extraction results.  Incoming words are fed into
+// `MicPipeline` while high level concepts update the UI.  Connection
+// logic includes reconnection and shared memory reading via
+// `SharedRingBuffer`.
 
 import Combine
-import CoreIPC // <-- add import for the new module
-
-// Remove: import CoreIPC
-// Add standard imports:
+import Foundation
+import Network
 import Foundation
 import Network
 

@@ -1,4 +1,5 @@
 // swift-tools-version: 5.9
+// Swift Package manifest for the Thought Crystallizer app.
 import PackageDescription
 
 let package = Package(

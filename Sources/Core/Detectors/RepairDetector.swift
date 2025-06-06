@@ -1,6 +1,8 @@
 // MARK: - RepairDetector.swift
-
-// Flags immediate word repetitions (e.g., “I I think”)
+//
+// Detects immediate word repetitions which often indicate hesitation or
+// cognitive overload.  The detector is intentionally simple – only two
+// consecutive identical words are flagged.
 
 import Foundation
 

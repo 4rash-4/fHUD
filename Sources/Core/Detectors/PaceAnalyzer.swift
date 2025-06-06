@@ -1,6 +1,9 @@
 // MARK: - PaceAnalyzer.swift
-
-// Calculates live words-per-minute and flags slowdowns.
+//
+// Tracks speaking rate over a sliding window.  This lightweight analyzer
+// forms part of the drift detection layer by monitoring words per minute
+// and signalling when the user's pace drops more than 25 % below their
+// baseline.
 
 import Foundation
 

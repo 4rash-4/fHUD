@@ -1,6 +1,8 @@
 // MARK: - PauseDetector.swift
-
-// Detects silences ≥ 0.3 s between words.
+//
+// Simple drift detector that records the time between spoken words.
+// If a pause longer than the configured threshold (default 0.3 s) is
+// observed it signals potential loss of focus.
 
 import Foundation
 

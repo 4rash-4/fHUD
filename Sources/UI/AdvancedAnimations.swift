@@ -1,6 +1,9 @@
 // MARK: - AdvancedAnimations.swift
-
-// Performance-optimized animation engine with proper memory management
+//
+// Houses the custom animation engine responsible for concept particles
+// and ambient connections.  The engine uses CADisplayLink and several
+// memory conscious techniques (object pools, adaptive quality) to run
+// smoothly on low end hardware.
 
 import Combine
 import simd

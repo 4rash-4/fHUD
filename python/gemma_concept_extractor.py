@@ -1,6 +1,9 @@
-"""
-Gemma-3 MLX Concept Extractor for Thought Crystallization
-Silently analyzes transcribed speech to extract concepts, projects, and connections
+"""Gemma Concept Extraction
+---------------------------
+This module wraps a small Gemma language model (via MLX) to pull
+meaningful concepts from the live transcript.  The results are stored
+in a lightweight SQLite knowledge graph so that recurring ideas can be
+linked together.  It exposes an async API used by ``main_server.py``.
 """
 
 import json

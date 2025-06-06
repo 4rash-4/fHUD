@@ -1,6 +1,9 @@
-"""
-Optimized Parakeet MLX WebSocket server for fHUD
-High-performance streaming with deduplication and memory management
+"""Parakeet MLX WebSocket Server
+--------------------------------
+Streams microphone audio through a Parakeet ASR model using the MLX
+runtime.  Results are sent to connected clients over WebSocket and also
+returned to the shared memory ring buffer so the Swift app can display
+them with minimal latency.
 """
 
 import asyncio

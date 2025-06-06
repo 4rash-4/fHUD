@@ -1,3 +1,8 @@
+// MARK: - SharedRingBuffer.swift
+//
+// POSIX shared memory transport between the Python backend and Swift.
+// Swift reads from the ring buffer at ~60 Hz and publishes transcript
+// fragments as `String` values.
 import Combine
 import Darwin
 import Foundation
@@ -14,11 +19,16 @@ public final class SharedRingBuffer {
     public let publisher = PassthroughSubject<String, Never>()
 
     public init?() {
-        // 1. shm_open
-        fd = shm_open(shmName, O_RDWR, S_IRUSR | S_IWUSR)
-        guard fd != -1 else {
-            print("SharedRingBuffer: shm_open failed")
-            return nil
+        // 1. shm_open (create if needed)
+        fd = shm_open(shmName, O_RDWR | O_CREAT, S_IRUSR | S_IWUSR)
+        if fd == -1 {
+            // Attempt to unlink stale segment and retry once
+            shm_unlink(shmName)
+            fd = shm_open(shmName, O_RDWR | O_CREAT, S_IRUSR | S_IWUSR)
+            guard fd != -1 else {
+                print("SharedRingBuffer: Failed to create shared memory")
+                return nil
+            }
         }
         // 2. ftruncate (ensure size)
         guard ftruncate(fd, off_t(shmSize)) != -1 else {

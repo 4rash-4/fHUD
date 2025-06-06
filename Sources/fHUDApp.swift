@@ -1,6 +1,13 @@
 // MARK: - fHUDApp.swift
-
-// Thought Crystallizer - Fixed app architecture with proper state management
+//
+// Application entry point for the Thought Crystallizer prototype.
+//
+// This file wires together the microphone processing pipeline, the
+// WebSocket bridge to the Python backend and the main SwiftUI views.
+// It intentionally keeps global state to a minimum and exposes only
+// `MicPipeline` and `ASRBridge` via `EnvironmentObject` so that views
+// remain lightweight.  The window itself is configured to float above
+// other windows in a translucent cassette‑futuristic style.
 
 import SwiftUI
 

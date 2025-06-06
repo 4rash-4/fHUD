@@ -358,7 +358,7 @@ logging.basicConfig(
 if __name__ == "__main__":
     # Start Tornado application
     app = make_app()
-    app.listen(8765)
+    app.listen(8765, address="127.0.0.1")
     # Schedule daily export at 02:00
     scheduler = TornadoScheduler()
     scheduler.add_job(export_to_markdown, "cron", hour=2, minute=0)

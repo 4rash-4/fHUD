@@ -123,10 +123,18 @@ final class ASRBridge: ObservableObject {
 
     private func processTranscriptionEvent(_ text: String) {
         decodingQueue.async { [weak self] in
-            guard let self,
-                  let data = text.data(using: .utf8),
-                  let event = try? JSONDecoder().decode(TranscriptionEvent.self, from: data)
-            else { return }
+            guard let self else { return }
+            guard let data = text.data(using: .utf8) else {
+                print("⚠️ Invalid UTF-8 in transcription event")
+                return
+            }
+            let event: TranscriptionEvent
+            do {
+                event = try JSONDecoder().decode(TranscriptionEvent.self, from: data)
+            } catch {
+                print("❌ Failed to decode transcription event: \(error)")
+                return
+            }
             Task { @MainActor in
                 await self.mic?.ingest(word: event.w, at: event.t)
                 // Buffer for concept extraction

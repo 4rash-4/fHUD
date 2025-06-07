@@ -111,15 +111,13 @@ class AnimationEngine: ObservableObject {
     static let charcoalDark = Color(red: 0.12, green: 0.12, blue: 0.12)
     static let charcoalMid  = Color(red: 0.20, green: 0.20, blue: 0.20)
 
-    deinit {
-        // synchronous teardown
-        displayLink?.invalidate()
-        displayLink = nil
-        timer?.cancel()
-        timer = nil
-        animatedParticles.removeAll()
-        animatedConnections.removeAll()
+    // MARK: - Lifecycle
+
+    init() {
+        // Initialize any needed state
     }
+
+    // Remove the deinit entirely - cleanup will be handled by stopEngine()
 
     func startEngine() {
         guard displayLink == nil && timer == nil else { return }
@@ -149,6 +147,8 @@ class AnimationEngine: ObservableObject {
         displayLink = nil
         timer?.cancel()
         timer = nil
+        animatedParticles.removeAll()
+        animatedConnections.removeAll()
         print("🎬 Animation engine stopped – final FPS: \(String(format: "%.1f", currentFPS))")
     }
 

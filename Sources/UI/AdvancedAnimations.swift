@@ -33,6 +33,28 @@ struct AnimatedParticle: Identifiable {
     }
 }
 
+extension AnimatedParticle {
+    init(position: simd_float2,
+         velocity: simd_float2 = .zero,
+         maxAge: Float = 30.0,
+         concept: String = "",
+         particleType: ParticleType = .thought,
+         pulsePhase: Float = 0,
+         size: Float = 2.0) {
+        self.position = position
+        self.velocity = velocity
+        self.acceleration = .zero
+        self.age = 0
+        self.maxAge = maxAge
+        self.alpha = 1.0
+        self.size = size
+        self.concept = concept
+        self.particleType = particleType
+        self.pulsePhase = pulsePhase
+        self.targetPosition = nil
+    }
+}
+
 struct AnimatedConnection: Identifiable {
     let id = UUID()
     var startPoint: simd_float2
@@ -57,6 +79,7 @@ struct AnimatedConnection: Identifiable {
 
 // MARK: - Animation Engine
 
+@available(macOS 15.0, *)
 @MainActor
 class AnimationEngine: ObservableObject {
     private var displayLink: CADisplayLink?
@@ -90,11 +113,13 @@ class AnimationEngine: ObservableObject {
     static let charcoalMid = Color(red: 0.2, green: 0.2, blue: 0.2)
 
     deinit {
-        cleanup()
+        Task { @MainActor in
+            await cleanup()
+        }
     }
 
-    private func cleanup() {
-        stopEngine()
+    private func cleanup() async {
+        await stopEngine()
         animatedParticles.removeAll()
         animatedConnections.removeAll()
     }
@@ -110,7 +135,7 @@ class AnimationEngine: ObservableObject {
         initializeAmbientParticles()
     }
 
-    func stopEngine() {
+    func stopEngine() async {
         displayLink?.invalidate()
         displayLink = nil
         print("🎬 Animation engine stopped - final FPS: \(String(format: "%.1f", currentFPS))")
@@ -563,7 +588,7 @@ class AnimationEngine: ObservableObject {
             if let particle = pool.popLast() {
                 return particle
             } else {
-                return AnimatedParticle() // Default initializer
+                return AnimatedParticle(position: .zero)
             }
         }
 
@@ -576,7 +601,7 @@ class AnimationEngine: ObservableObject {
 
     // Preallocate particle buffer
     private let maxParticles = 512
-    private var particleBuffer: [AnimatedParticle] = Array(repeating: AnimatedParticle(), count: 512)
+    private var particleBuffer: [AnimatedParticle] = Array(repeating: AnimatedParticle(position: .zero), count: 512)
     private let particlePool = ParticlePool(maxPoolSize: 512)
 
     // Example usage in animation update:

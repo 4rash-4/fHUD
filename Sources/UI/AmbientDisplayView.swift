@@ -84,7 +84,9 @@ struct AmbientDisplayView: View {
     }
 
     private func stopAnimations() {
-        animationEngine.stopEngine()
+        Task { @MainActor in
+            await animationEngine.stopEngine()
+        }
         animationTimer?.invalidate()
         animationTimer = nil
     }

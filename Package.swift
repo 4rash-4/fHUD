@@ -4,7 +4,7 @@ import PackageDescription
 
 let package = Package(
     name: "fHUD",
-    platforms: [.macOS(.v13)],
+    platforms: [.macOS(.v15)],
     products: [
         .executable(name: "fHUD", targets: ["fHUD"]),
     ],

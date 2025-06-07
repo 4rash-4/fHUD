@@ -4,7 +4,11 @@
 // Swift reads from the ring buffer at ~60 Hz and publishes transcript
 // fragments as `String` values.
 import Combine
+#if canImport(Darwin)
 import Darwin
+#else
+import Glibc
+#endif
 import Foundation
 
 /// A 64 KB POSIX shared‐memory ring buffer with head/tail at bytes 0–7.

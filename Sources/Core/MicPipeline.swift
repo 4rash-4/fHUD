@@ -40,6 +40,7 @@ public final class MicPipeline: ObservableObject {
         setupPaceTimer()
     }
 
+    @MainActor
     deinit {
         paceTimer?.invalidate()
         paceTimer = nil

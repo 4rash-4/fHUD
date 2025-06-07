@@ -28,7 +28,7 @@ public final class MicPipeline: ObservableObject {
 
     // Memory management
     private let maxTranscriptWords = 1500
-    private var transcriptWords: [String] = []
+    private var transcriptBuffer = RingBuffer<String>(capacity: 1500)
 
     // MARK: - Init
 
@@ -76,30 +76,22 @@ public final class MicPipeline: ObservableObject {
     }
 
     private func updateTranscript(with word: String) {
-        transcriptWords.append(word)
-
-        // Limit transcript size to prevent memory issues
-        if transcriptWords.count > maxTranscriptWords {
-            // Keep only the most recent words
-            transcriptWords = Array(transcriptWords.suffix(maxTranscriptWords - 500))
-        }
-
-        // Update published transcript
-        transcript = transcriptWords.joined(separator: " ")
+        transcriptBuffer.push(word)
+        transcript = transcriptBuffer.toArray().joined(separator: " ")
     }
 
     // MARK: - Public Methods
 
     public func clearTranscript() {
-        transcriptWords.removeAll()
+        transcriptBuffer = RingBuffer<String>(capacity: maxTranscriptWords)
         transcript = ""
     }
 
     public func getRecentWords(count: Int) -> [String] {
-        return Array(transcriptWords.suffix(count))
+        return transcriptBuffer.recent(count)
     }
 
     public func getWordCount() -> Int {
-        return transcriptWords.count
+        return transcriptBuffer.toArray().count
     }
 }

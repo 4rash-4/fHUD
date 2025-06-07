@@ -8,6 +8,35 @@
 import Combine
 import SwiftUI
 
+// MARK: - Data Models
+
+/// Basic representation of a visible concept within the ambient view.
+/// Contains positional and timing information so the UI can animate each
+/// particle independently.
+struct ConceptParticle: Identifiable {
+    let id: UUID
+    let text: String
+    let category: ConceptCategory
+    var position: CGPoint
+    var velocity: CGPoint
+    var opacity: Double
+    var scale: Double
+    let createdAt: Date
+    var lifespan: TimeInterval
+    var animationDuration: Double
+}
+
+/// Lightweight model describing a transient connection line between two
+/// concept particles on screen.
+struct ConnectionLine: Identifiable {
+    let id: UUID
+    var from: CGPoint
+    var to: CGPoint
+    var strength: Float
+    var opacity: Double
+    let createdAt: Date
+}
+
 struct AmbientDisplayView: View {
     @EnvironmentObject var mic: MicPipeline
     @EnvironmentObject var asrBridge: ASRBridge

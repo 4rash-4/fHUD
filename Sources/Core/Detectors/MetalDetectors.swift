@@ -22,6 +22,10 @@ class MetalDriftDetector {
     private var timestampBuffer: MTLBuffer?
     private var resultBuffer: MTLBuffer?
 
+    // Memory pressure handling
+    private var memoryPressureSource: DispatchSourceMemoryPressure?
+    private var underMemoryPressure = false
+
     // Compute pipelines
     private var fillerDetectionPipeline: MTLComputePipelineState?
     private var pauseDetectionPipeline: MTLComputePipelineState?
@@ -51,8 +55,13 @@ class MetalDriftDetector {
 
         setupComputePipelines()
         allocateBuffers()
+        setupMemoryPressureHandling()
 
         print("✅ Metal drift detector initialized")
+    }
+
+    deinit {
+        memoryPressureSource?.cancel()
     }
 
     private func setupComputePipelines() {
@@ -87,13 +96,66 @@ class MetalDriftDetector {
                                          options: .storageModeShared)
     }
 
+    // MARK: - Memory Pressure Handling
+
+    private func setupMemoryPressureHandling() {
+        let source = DispatchSource.makeMemoryPressureSource(eventMask: [.warning, .critical],
+                                                            queue: DispatchQueue.global(qos: .utility))
+        source.setEventHandler { [weak self] in
+            self?.handleMemoryPressure()
+        }
+        source.resume()
+        memoryPressureSource = source
+    }
+
+    private func handleMemoryPressure() {
+        audioBuffer = nil
+        timestampBuffer = nil
+        resultBuffer = nil
+        underMemoryPressure = true
+        print("⚠️ MetalDriftDetector released buffers under memory pressure")
+    }
+
+    private func recoverFromPressureIfNeeded() {
+        guard underMemoryPressure else { return }
+        allocateBuffers()
+        underMemoryPressure = false
+        print("ℹ️ MetalDriftDetector buffers reallocated after pressure")
+    }
+
     // MARK: - Optimized Metal Buffer Updates
 
     private func processAudioChunk(_ buffer: [Float]) {
+        recoverFromPressureIfNeeded()
+
         // Reuse existing buffers instead of reallocating
         audioBuffer?.contents().copyMemory(from: buffer, byteCount: bufferSize * MemoryLayout<Float>.size)
+
         // Enqueue once per batch instead of per sample
         enqueueDetectionKernel()
+    }
+
+    private func enqueueDetectionKernel() {
+        guard let commandBuffer = commandQueue.makeCommandBuffer() else {
+            print("❌ Failed to create Metal command buffer")
+            recoverFromError()
+            return
+        }
+
+        commandBuffer.addCompletedHandler { [weak self] buffer in
+            if buffer.status == .error {
+                print("❌ Metal command buffer error: \(String(describing: buffer.error))")
+                self?.recoverFromError()
+            }
+        }
+
+        commandBuffer.commit()
+    }
+
+    private func recoverFromError() {
+        print("↩️ Attempting to recover MetalDriftDetector")
+        setupComputePipelines()
+        allocateBuffers()
     }
 }
 

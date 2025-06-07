@@ -61,21 +61,22 @@ public final class SharedRingBuffer {
         timer?.setEventHandler { [weak self] in
             guard let self = self else { return }
 
-            flock(self.lockFd, LOCK_EX)
-            let head = self.readUInt32(at: 0)
-            let tail = self.readUInt32(at: 4)
-            let capacity = self.shmSize - 8
-            let available = head >= tail
-                ? Int(head - tail)
-                : Int(UInt32(capacity) - (tail - head))
-            guard available > 0 else {
-                flock(self.lockFd, LOCK_UN)
-                return
-            }
-            let start = 8 + Int(tail)
-            let data: Data
-            if start + available <= self.shmSize {
-                data = Data(bytes: self.ptr + start, count: available)
+            if flock(self.lockFd, LOCK_EX) == 0 {
+                defer { flock(self.lockFd, LOCK_UN) }
+
+                let head = self.readUInt32(at: 0)
+                let tail = self.readUInt32(at: 4)
+                let capacity = self.shmSize - 8
+                let available = head >= tail
+                    ? Int(head - tail)
+                    : Int(UInt32(capacity) - (tail - head))
+                guard available > 0 else {
+                    return
+                }
+                let start = 8 + Int(tail)
+                let data: Data
+                if start + available <= self.shmSize {
+                    data = Data(bytes: self.ptr + start, count: available)
             } else {
                 let part1 = self.shmSize - start
                 let part2 = available - part1
@@ -83,12 +84,12 @@ public final class SharedRingBuffer {
                 tmp.append(Data(bytes: self.ptr + 8, count: part2))
                 data = tmp
             }
-            if let text = String(data: data, encoding: .utf8), !text.isEmpty {
-                self.publisher.send(text)
+                if let text = String(data: data, encoding: .utf8), !text.isEmpty {
+                    self.publisher.send(text)
+                }
+                // advance tail = head
+                self.writeUInt32(at: 4, value: head)
             }
-            // advance tail = head
-            self.writeUInt32(at: 4, value: head)
-            flock(self.lockFd, LOCK_UN)
         }
         timer?.resume()
     }

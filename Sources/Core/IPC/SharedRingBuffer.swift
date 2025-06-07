@@ -9,6 +9,7 @@ public final class SharedRingBuffer {
     private let shmSize = 64 * 1024
     private var fd: Int32 = -1
     private var ptr: UnsafeMutableRawPointer!
+    private var lockFd: Int32 = -1
     private var timer: DispatchSourceTimer?
     public let publisher = PassthroughSubject<String, Never>()
 
@@ -32,6 +33,14 @@ public final class SharedRingBuffer {
             return nil
         }
         ptr = UnsafeMutableRawPointer(m)
+
+        // Open shared lock used by Python writer
+        lockFd = open("/tmp/tc_rb.lock", O_RDWR)
+        if lockFd == -1 {
+            print("SharedRingBuffer: failed to open lock file")
+            return nil
+        }
+
         startPolling()
     }
 
@@ -41,17 +50,23 @@ public final class SharedRingBuffer {
         timer?.schedule(deadline: .now(), repeating: .milliseconds(16))
         timer?.setEventHandler { [weak self] in
             guard let self = self else { return }
-            let head = self.readUInt32(at: 0)
-            let tail = self.readUInt32(at: 4)
-            let capacity = self.shmSize - 8
-            let available = head >= tail
-                ? Int(head - tail)
-                : Int(UInt32(capacity) - (tail - head))
-            guard available > 0 else { return }
-            let start = 8 + Int(tail)
-            let data: Data
-            if start + available <= self.shmSize {
-                data = Data(bytes: self.ptr + start, count: available)
+
+            if flock(self.lockFd, LOCK_EX) == 0 {
+                defer { flock(self.lockFd, LOCK_UN) }
+
+                let head = self.readUInt32(at: 0)
+                let tail = self.readUInt32(at: 4)
+                let capacity = self.shmSize - 8
+                let available = head >= tail
+                    ? Int(head - tail)
+                    : Int(UInt32(capacity) - (tail - head))
+                guard available > 0 else {
+                    return
+                }
+                let start = 8 + Int(tail)
+                let data: Data
+                if start + available <= self.shmSize {
+                    data = Data(bytes: self.ptr + start, count: available)
             } else {
                 let part1 = self.shmSize - start
                 let part2 = available - part1
@@ -59,11 +74,12 @@ public final class SharedRingBuffer {
                 tmp.append(Data(bytes: self.ptr + 8, count: part2))
                 data = tmp
             }
-            if let text = String(data: data, encoding: .utf8), !text.isEmpty {
-                self.publisher.send(text)
+                if let text = String(data: data, encoding: .utf8), !text.isEmpty {
+                    self.publisher.send(text)
+                }
+                // advance tail = head
+                self.writeUInt32(at: 4, value: head)
             }
-            // advance tail = head
-            self.writeUInt32(at: 4, value: head)
         }
         timer?.resume()
     }
@@ -80,6 +96,9 @@ public final class SharedRingBuffer {
         timer?.cancel()
         munmap(ptr, shmSize)
         close(fd)
+        if lockFd != -1 {
+            close(lockFd)
+        }
         shm_unlink(shmName)
     }
 }

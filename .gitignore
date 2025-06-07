@@ -10,3 +10,7 @@ Models/
 *.mlmodel.DS_Store
 .DS_Store
 .DS_Store
+
+# Python bytecode
+__pycache__/
+*.pyc

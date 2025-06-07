@@ -67,6 +67,7 @@ final class ASRBridge: ObservableObject {
         }
     }
 
+    @MainActor
     deinit {
         reconnectTimer?.invalidate()
         reconnectTimer = nil

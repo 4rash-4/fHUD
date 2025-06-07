@@ -7,8 +7,17 @@
 import Combine
 #if canImport(Darwin)
 import Darwin
+
+@_silgen_name("shm_open")
+func c_shm_open(_ name: UnsafePointer<CChar>, _ oflag: Int32, _ mode: mode_t) -> Int32
+
+@_silgen_name("shm_unlink")
+func c_shm_unlink(_ name: UnsafePointer<CChar>) -> Int32
+
 #else
 import Glibc
+let c_shm_open = shm_open
+let c_shm_unlink = shm_unlink
 #endif
 import Foundation
 
@@ -26,15 +35,15 @@ public final class SharedRingBuffer {
     public init?() {
         // 1. shm_open (create if needed)
         fd = shmName.withCString { namePtr in
-            shm_open(namePtr, O_RDWR | O_CREAT, mode_t(S_IRUSR | S_IWUSR))
+            c_shm_open(namePtr, O_RDWR | O_CREAT, mode_t(S_IRUSR | S_IWUSR))
         }
         if fd == -1 {
             // Attempt to unlink stale segment and retry once
             shmName.withCString { namePtr in
-                shm_unlink(namePtr)
+                c_shm_unlink(namePtr)
             }
             fd = shmName.withCString { namePtr in
-                shm_open(namePtr, O_RDWR | O_CREAT, mode_t(S_IRUSR | S_IWUSR))
+                c_shm_open(namePtr, O_RDWR | O_CREAT, mode_t(S_IRUSR | S_IWUSR))
             }
         }
         guard fd != -1 else {
@@ -131,7 +140,7 @@ public final class SharedRingBuffer {
             close(lockFd)
         }
         shmName.withCString { namePtr in
-            shm_unlink(namePtr)
+            c_shm_unlink(namePtr)
         }
     }
 }

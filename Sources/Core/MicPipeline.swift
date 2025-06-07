@@ -41,9 +41,9 @@ public final class MicPipeline: ObservableObject {
     }
 
     deinit {
-        Task { @MainActor in
-            cleanup()
-        }
+        paceTimer?.invalidate()
+        paceTimer = nil
+        cancellables.removeAll()
     }
 
     private func cleanup() {

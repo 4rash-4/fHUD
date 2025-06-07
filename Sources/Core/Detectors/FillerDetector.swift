@@ -19,6 +19,8 @@ public final class FillerDetector {
 
     /// Simple threshold helper (≥ 3 fillers in the last 30 words = drift).
     public func isDrifting() -> Bool {
-        return window.count >= 15 && record(word: "") >= 3
+        let words = window.toArray()
+        let fillerCount = words.filter { fillers.contains($0) }.count
+        return words.count >= 15 && fillerCount >= 3
     }
 }

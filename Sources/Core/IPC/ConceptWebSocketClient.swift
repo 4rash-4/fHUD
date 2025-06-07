@@ -38,16 +38,18 @@ public final class ConceptWebSocketClient {
     }
 
     private func receive() {
-        task?.receive(completionHandlerQueue: decodeQueue) { [weak self] result in
+        task?.receive { [weak self] result in
             guard let self = self else { return }
-            switch result {
-            case .failure:
-                self.scheduleReconnect()
-            case let .success(.string(text)):
-                self.decodeAndPublish(text)
-                self.receive()
-            default:
-                self.receive()
+            self.decodeQueue.async {
+                switch result {
+                case .failure:
+                    self.scheduleReconnect()
+                case let .success(.string(text)):
+                    self.decodeAndPublish(text)
+                    self.receive()
+                default:
+                    self.receive()
+                }
             }
         }
     }

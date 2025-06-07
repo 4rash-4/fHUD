@@ -8,6 +8,7 @@ import Combine
 
 extension Timer: @unchecked Sendable {}
 extension AnyCancellable: @unchecked Sendable {}
+extension PassthroughSubject: @unchecked Sendable {} // ← NEW
 
 // MARK: - ASRBridge.swift
 //
@@ -78,7 +79,6 @@ final class ASRBridge: ObservableObject {
         }
     }
 
-    @MainActor
     deinit {
         reconnectTimer?.invalidate()
         reconnectTimer = nil

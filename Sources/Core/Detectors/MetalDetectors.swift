@@ -162,18 +162,25 @@ class MetalDriftDetector {
 // MARK: - Hardware-Accelerated Detector Implementations
 
 @available(macOS 10.13, *)
-class MetalFillerDetector: FillerDetector {
+final class MetalFillerDetector: FillerDetector {
     private let metalDetector: MetalDriftDetector?
 
-    // Vectorized processing using Accelerate
-    private var wordHashes: [UInt32] = []
-    private var fillerHashes: Set<UInt32>
+    // SIMD‑friendly caches
+    private var wordHashes : [UInt32] = []
+
+    /// Pre‑hashed filler words (computed once).
+    private static let prehashed: Set<UInt32> = {
+        return Set(FillerDetector.canonicalFillers.map {
+            UInt32(truncatingIfNeeded: $0.hashValue)
+        })
+    }()
+
+    // handy alias
+    private var fillerHashes: Set<UInt32> { Self.prehashed }
 
     override init() {
         metalDetector = MetalDriftDetector()
-
-        // Pre-compute filler word hashes for fast comparison
-        fillerHashes = Set(fillers.map { UInt32(bitPattern: $0.hashValue) })
+        super.init()   // nothing else to do
     }
 
     override func record(word: String) -> Int {
@@ -189,7 +196,7 @@ class MetalFillerDetector: FillerDetector {
 
     private func metalAcceleratedCount(word: String) -> Int {
         // GPU-accelerated filler detection
-        let wordHash = UInt32(bitPattern: word.lowercased().hashValue)
+        let wordHash = UInt32(truncatingIfNeeded: word.lowercased().hashValue)
         wordHashes.append(wordHash)
 
         // Keep only recent words

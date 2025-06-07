@@ -133,6 +133,9 @@ class AnimationEngine: ObservableObject {
 
         // Global effects
         updateGlobalEffects(deltaTime: deltaTime)
+
+        // Enforce memory limits under pressure
+        enforceMemoryLimits()
     }
 
     private func trackPerformance(currentTime: CFTimeInterval, deltaTime _: CFTimeInterval) {
@@ -511,6 +514,16 @@ class AnimationEngine: ObservableObject {
             connections.removeFirst(connectionRemoveCount)
 
             print("⚠️ Memory pressure detected, reduced particles and connections")
+        }
+    }
+
+    private func enforceMemoryLimits() {
+        let pressure = getCurrentMemoryUsage()
+        if pressure > 0.7 {
+            let removeCount = animatedParticles.count * 3 / 10
+            if removeCount > 0 {
+                animatedParticles.removeFirst(removeCount)
+            }
         }
     }
 

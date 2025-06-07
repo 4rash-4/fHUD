@@ -1,8 +1,9 @@
 // MARK: - SharedRingBuffer.swift
 //
 // POSIX shared memory transport between the Python backend and Swift.
-// Swift reads from the ring buffer at ~60 Hz and publishes transcript
+// Swift reads from the ring buffer at ~60 Hz and publishes transcript
 // fragments as `String` values.
+
 import Combine
 #if canImport(Darwin)
 import Darwin
@@ -35,18 +36,25 @@ public final class SharedRingBuffer {
             fd = shmName.withCString { namePtr in
                 shm_open(namePtr, O_RDWR | O_CREAT, mode_t(S_IRUSR | S_IWUSR))
             }
-            guard fd != -1 else {
-                print("SharedRingBuffer: Failed to create shared memory")
-                return nil
-            }
         }
+        guard fd != -1 else {
+            print("SharedRingBuffer: Failed to create shared memory")
+            return nil
+        }
+
         // 2. ftruncate (ensure size)
         guard ftruncate(fd, off_t(shmSize)) != -1 else {
             print("SharedRingBuffer: ftruncate failed")
             return nil
         }
+
         // 3. mmap
-        guard let m = mmap(nil, shmSize, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0),
+        guard let m = mmap(nil,
+                            shmSize,
+                            PROT_READ | PROT_WRITE,
+                            MAP_SHARED,
+                            fd,
+                            0),
               m != MAP_FAILED
         else {
             print("SharedRingBuffer: mmap failed")
@@ -80,23 +88,26 @@ public final class SharedRingBuffer {
                 let available = head >= tail
                     ? Int(head - tail)
                     : Int(UInt32(capacity) - (tail - head))
-                guard available > 0 else {
-                    return
-                }
+                guard available > 0 else { return }
+
                 let start = 8 + Int(tail)
                 let data: Data
                 if start + available <= self.shmSize {
                     data = Data(bytes: self.ptr + start, count: available)
-            } else {
-                let part1 = self.shmSize - start
-                let part2 = available - part1
-                var tmp = Data(bytes: self.ptr + start, count: part1)
-                tmp.append(Data(bytes: self.ptr + 8, count: part2))
-                data = tmp
-            }
-                if let text = String(data: data, encoding: .utf8), !text.isEmpty {
+                } else {
+                    let part1 = self.shmSize - start
+                    let part2 = available - part1
+                    var tmp = Data(bytes: self.ptr + start, count: part1)
+                    tmp.append(Data(bytes: self.ptr + 8, count: part2))
+                    data = tmp
+                }
+
+                if let text = String(data: data, encoding: .utf8),
+                   !text.isEmpty
+                {
                     self.publisher.send(text)
                 }
+
                 // advance tail = head
                 self.writeUInt32(at: 4, value: head)
             }
@@ -105,7 +116,7 @@ public final class SharedRingBuffer {
     }
 
     private func readUInt32(at offset: Int) -> UInt32 {
-        return ptr.load(fromByteOffset: offset, as: UInt32.self)
+        ptr.load(fromByteOffset: offset, as: UInt32.self)
     }
 
     private func writeUInt32(at offset: Int, value: UInt32) {

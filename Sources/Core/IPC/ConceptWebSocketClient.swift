@@ -39,16 +39,20 @@ public final class ConceptWebSocketClient {
 
     private func receive() {
         task?.receive { [weak self] result in
-            guard let self = self else { return }
-            self.decodeQueue.async {
+            guard let strongSelf = self else { return }
+
+            strongSelf.decodeQueue.async {
                 switch result {
                 case .failure:
-                    self.scheduleReconnect()
+                    Task { @MainActor in
+                        strongSelf.scheduleReconnect()
+                    }
+
                 case let .success(.string(text)):
-                    self.decodeAndPublish(text)
-                    self.receive()
+                    strongSelf.decodeAndPublish(text)
+
                 default:
-                    self.receive()
+                    strongSelf.receive()
                 }
             }
         }
@@ -56,12 +60,20 @@ public final class ConceptWebSocketClient {
 
     private func decodeAndPublish(_ text: String) {
         do {
-            let wrapper = try decoder.decode(MessageContract<ConceptMessage>.self, from: Data(text.utf8))
+            let wrapper = try decoder.decode(
+                MessageContract<ConceptMessage>.self,
+                from: Data(text.utf8)
+            )
             guard wrapper.type == "concept" else { return }
-            // Hop onto the main actor for UI-safe publishing
+
+            // Capture values, not self
+            let payload = wrapper.payload
+            let pub = publisher
+
             Task { @MainActor in
-                self.publisher.send(wrapper.payload)
+                pub.send(payload)
             }
+
         } catch {
             print("Concept decode error:", error)
         }

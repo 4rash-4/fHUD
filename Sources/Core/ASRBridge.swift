@@ -57,10 +57,8 @@ final class ASRBridge: ObservableObject {
             ringBuffer = reader
             ringCancellable = reader.publisher
                 .receive(on: DispatchQueue.main)
-                .sink { [weak self] _ in
+                .sink { _ in
                     // Forward transcript text as needed
-                    // For example, you might call a method to process the transcript:
-                    // await self?.processTranscriptionEvent(text)
                 }
         }
         Task {
@@ -70,7 +68,9 @@ final class ASRBridge: ObservableObject {
     }
 
     deinit {
-        cleanup()
+        Task { @MainActor in
+            cleanup()
+        }
     }
 
     private func cleanup() {
@@ -140,7 +140,7 @@ final class ASRBridge: ObservableObject {
                 return
             }
             Task { @MainActor in
-                await self.mic?.ingest(word: event.w, at: event.t)
+                self.mic?.ingest(word: event.w, at: event.t)
                 // Buffer for concept extraction
                 self.conceptBuffer.append(event.w)
                 if self.conceptBuffer.count > self.conceptBufferLimit {
@@ -320,13 +320,17 @@ final class ASRBridge: ObservableObject {
             case let .success(.string(json)):
                 // Handle control frame
                 // self?.handleControlFrame(json)
-                break
+                _ = json // silence unused variable warning
             case let .failure(err):
                 print("WS control error:", err)
             default:
                 break
             }
-            self?.startWebSocketControl()
+            if let self = self {
+                Task { @MainActor in
+                    self.startWebSocketControl()
+                }
+            }
         }
     }
 
@@ -351,9 +355,17 @@ final class ASRBridge: ObservableObject {
             switch result {
             case .success:
                 // ...handle message...
-                self?.receiveMessage()
+                if let self = self {
+                    Task { @MainActor in
+                        self.receiveMessage()
+                    }
+                }
             case .failure:
-                self?.handleDisconnection()
+                if let self = self {
+                    Task { @MainActor in
+                        self.handleDisconnection()
+                    }
+                }
             }
         }
     }
@@ -366,9 +378,12 @@ final class ASRBridge: ObservableObject {
             let delay = min(pow(2.0, Double(reconnectAttempts)), 30.0) // Exponential backoff, max 30s
 
             reconnectTimer = Timer.scheduledTimer(withTimeInterval: delay, repeats: false) { [weak self] _ in
-                self?.reconnectAttempts += 1
-                self?.isReconnecting = false
-                self?.connect()
+                guard let self = self else { return }
+                Task { @MainActor in
+                    self.reconnectAttempts += 1
+                    self.isReconnecting = false
+                    self.connect()
+                }
             }
         } else {
             // Max attempts reached, stop trying

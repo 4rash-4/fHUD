@@ -97,6 +97,11 @@ public final class RingBuffer<Element> {
     public var isFull: Bool {
         return lock.withLock { count == capacity }
     }
+
+    /// Current number of elements in the buffer
+    public var countValue: Int {
+        return lock.withLock { count }
+    }
 }
 
 // Extension for NSLock convenience

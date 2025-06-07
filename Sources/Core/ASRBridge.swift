@@ -106,10 +106,10 @@ final class ASRBridge: ObservableObject {
 
                 switch message {
                 case let .string(text):
-                    await processTranscriptionEvent(text)
+                    processTranscriptionEvent(text)
                 case let .data(data):
                     if let text = String(data: data, encoding: .utf8) {
-                        await processTranscriptionEvent(text)
+                        processTranscriptionEvent(text)
                     }
                 @unknown default:
                     break
@@ -189,10 +189,10 @@ final class ASRBridge: ObservableObject {
 
                 switch message {
                 case let .string(text):
-                    await processConceptEvent(text)
+                    processConceptEvent(text)
                 case let .data(data):
                     if let text = String(data: data, encoding: .utf8) {
-                        await processConceptEvent(text)
+                        processConceptEvent(text)
                     }
                 @unknown default:
                     break

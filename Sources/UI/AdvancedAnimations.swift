@@ -83,6 +83,7 @@ struct AnimatedConnection: Identifiable {
 @MainActor
 class AnimationEngine: ObservableObject {
     private var displayLink: CADisplayLink?
+    private var timer: DispatchSourceTimer?
     private var lastFrameTime: CFTimeInterval = 0
     private var noiseOffset: Float = 0
 
@@ -113,23 +114,34 @@ class AnimationEngine: ObservableObject {
     static let charcoalMid = Color(red: 0.2, green: 0.2, blue: 0.2)
 
     deinit {
-        Task { @MainActor in
-            await cleanup()
-        }
-    }
-
-    private func cleanup() async {
-        await stopEngine()
+        // synchronously tear down
+        displayLink?.invalidate()
+        displayLink = nil
+        timer?.cancel()
+        timer = nil
         animatedParticles.removeAll()
         animatedConnections.removeAll()
     }
 
-    func startEngine() {
-        guard displayLink == nil else { return }
 
+    func startEngine() {
+        guard displayLink == nil && timer == nil else { return }
+
+        #if canImport(UIKit)
         displayLink = CADisplayLink(target: self, selector: #selector(frame))
         displayLink?.preferredFramesPerSecond = targetFPS
         displayLink?.add(to: .main, forMode: .common)
+        #else
+        timer = DispatchSource.makeTimerSource(queue: .main)
+        timer?.schedule(deadline: .now(), repeating: 1.0 / Double(targetFPS))
+        timer?.setEventHandler { [weak self] in
+            guard let self = self else { return }
+            Task { @MainActor in
+                await self.frameTimer()
+            }
+        }
+        timer?.resume()
+        #endif
 
         print("🎬 Animation engine started - targeting \(targetFPS)fps")
         initializeAmbientParticles()
@@ -138,11 +150,19 @@ class AnimationEngine: ObservableObject {
     func stopEngine() async {
         displayLink?.invalidate()
         displayLink = nil
+        timer?.cancel()
+        timer = nil
         print("🎬 Animation engine stopped - final FPS: \(String(format: "%.1f", currentFPS))")
     }
 
-    @objc private func frame(displayLink: CADisplayLink) {
-        let currentTime = displayLink.timestamp
+    @objc private func frame(_ link: CADisplayLink) {
+        Task { @MainActor in
+            await frameTimer()
+        }
+    }
+
+    private func frameTimer() async {
+        let currentTime = CACurrentMediaTime()
         let deltaTime = currentTime - lastFrameTime
 
         // Skip frame if delta is too large (e.g., app was backgrounded)
@@ -242,9 +262,9 @@ class AnimationEngine: ObservableObject {
     // Optimize particle physics
     private func updateParticlePhysics(_ particle: inout AnimatedParticle, deltaTime: Float) {
         // Use SIMD vector operations
-        let acceleration = simd_make_float2(
-            /* physics calculations */
-        )
+        let xAccel = particle.acceleration.x
+        let yAccel = particle.acceleration.y
+        let acceleration = simd_make_float2(xAccel, yAccel)
         particle.position += particle.velocity * deltaTime
         particle.velocity += acceleration * deltaTime
         // Use precalculated values
@@ -599,17 +619,4 @@ class AnimationEngine: ObservableObject {
         }
     }
 
-    // Preallocate particle buffer
-    private let maxParticles = 512
-    private var particleBuffer: [AnimatedParticle] = Array(repeating: AnimatedParticle(position: .zero), count: 512)
-    private let particlePool = ParticlePool(maxPoolSize: 512)
-
-    // Example usage in animation update:
-    private func updateParticles() {
-        for i in 0 ..< particleBuffer.count {
-            // ... update logic ...
-            // When a particle is no longer needed:
-            // particlePool.release(particleBuffer[i])
-        }
-    }
 }

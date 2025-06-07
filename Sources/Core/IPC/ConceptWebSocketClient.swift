@@ -58,7 +58,8 @@ public final class ConceptWebSocketClient {
         do {
             let wrapper = try decoder.decode(MessageContract<ConceptMessage>.self, from: Data(text.utf8))
             guard wrapper.type == "concept" else { return }
-            DispatchQueue.main.async {
+            // Hop onto the main actor for UI-safe publishing
+            Task { @MainActor in
                 self.publisher.send(wrapper.payload)
             }
         } catch {

@@ -170,7 +170,7 @@ final class MetalFillerDetector: FillerDetector {
 
     /// Pre‑hashed filler words (computed once).
     private static let prehashed: Set<UInt32> = {
-        return Set(FillerDetector.fillers.map {
+        return Set(FillerDetector.canonicalFillers.map {
             UInt32(truncatingIfNeeded: $0.hashValue)
         })
     }()
@@ -196,7 +196,7 @@ final class MetalFillerDetector: FillerDetector {
 
     private func metalAcceleratedCount(word: String) -> Int {
         // GPU-accelerated filler detection
-        let wordHash = UInt32(bitPattern: word.lowercased().hashValue)
+        let wordHash = UInt32(truncatingIfNeeded: word.lowercased().hashValue)
         wordHashes.append(wordHash)
 
         // Keep only recent words

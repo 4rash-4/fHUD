@@ -66,12 +66,12 @@ public final class ConceptWebSocketClient {
             )
             guard wrapper.type == "concept" else { return }
 
-            // Capture values, not self
+            // Grab the payload on the decode queue
             let payload = wrapper.payload
-            let pub = publisher
 
+            // Publish on the MainActor to avoid data races
             Task { @MainActor in
-                pub.send(payload)
+                self.publisher.send(payload)
             }
 
         } catch {
@@ -80,9 +80,12 @@ public final class ConceptWebSocketClient {
     }
 
     private func scheduleReconnect() {
-        DispatchQueue.global().asyncAfter(deadline: .now() + reconnectDelay) {
-            self.reconnectDelay = min(self.reconnectDelay * 2, 30)
-            self.connect()
+        DispatchQueue.global().asyncAfter(deadline: .now() + reconnectDelay) { [weak self] in
+            guard let self = self else { return }
+            Task { @MainActor in
+                self.reconnectDelay = min(self.reconnectDelay * 2, 30)
+                self.connect()
+            }
         }
     }
 

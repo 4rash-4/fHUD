@@ -125,7 +125,7 @@ class AnimationEngine: ObservableObject {
 
 
     func startEngine() {
-        guard displayLink == nil && timer == nil else { return }
+        guard displayLink == nil else { return }
 
         #if canImport(UIKit)
         displayLink = CADisplayLink(target: self, selector: #selector(frame))
@@ -133,7 +133,7 @@ class AnimationEngine: ObservableObject {
         displayLink?.add(to: .main, forMode: .common)
         #else
         timer = DispatchSource.makeTimerSource(queue: .main)
-        timer?.schedule(deadline: .now(), repeating: 1.0 / Double(targetFPS))
+        timer?.schedule(deadline: .now(), repeating: 1.0/Double(targetFPS))
         timer?.setEventHandler { [weak self] in
             guard let self = self else { return }
             Task { @MainActor in

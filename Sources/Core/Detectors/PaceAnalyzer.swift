@@ -14,12 +14,15 @@ public struct PaceMetrics {
     public let isBelowThreshold: Bool
 }
 
-public final class PaceAnalyzer {
-    private var baselineWPM: Float = 150 // default
-    private var runningSum: Float = 0
-    private var buffer: [Float] = []
-    private let capacity = 12
-    private let secondsPerBucket: Float = 5
+public class PaceAnalyzer {
+    // Allow subclasses to reuse core properties
+    var baselineWPM: Float = 150 // default
+    var runningSum: Float = 0
+    var buffer: [Float] = []
+    let capacity = 12
+    let secondsPerBucket: Float = 5
+
+    public init() {}
 
     /// Feed number of *words* spoken during the last 5 seconds.
     public func record(words: Int) -> PaceMetrics {

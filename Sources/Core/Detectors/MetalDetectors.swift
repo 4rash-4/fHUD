@@ -162,30 +162,28 @@ class MetalDriftDetector {
 // MARK: - Hardware-Accelerated Detector Implementations
 
 @available(macOS 10.13, *)
-class MetalFillerDetector {
+class MetalFillerDetector: FillerDetector {
     private let metalDetector: MetalDriftDetector?
-    private let window = RingBuffer<String>(capacity: 30)
-    private let fillers: Set<String> = ["um", "uh", "erm", "hmm", "like"]
 
     // Vectorized processing using Accelerate
     private var wordHashes: [UInt32] = []
     private var fillerHashes: Set<UInt32>
 
-    init() {
+    override init() {
         metalDetector = MetalDriftDetector()
 
         // Pre-compute filler word hashes for fast comparison
         fillerHashes = Set(fillers.map { UInt32(bitPattern: $0.hashValue) })
     }
 
-    func record(word: String) -> Int {
+    override func record(word: String) -> Int {
         window.push(word)
 
         // Use hardware-accelerated detection when available
         if metalDetector != nil {
             return metalAcceleratedCount(word: word)
         } else {
-            return fallbackCount(word: word)
+            return super.record(word: word)
         }
     }
 
@@ -211,27 +209,25 @@ class MetalFillerDetector {
         return window.toArray().filter { fillers.contains($0) }.count
     }
 
-    func isDrifting() -> Bool {
+    override func isDrifting() -> Bool {
         return window.count >= 15 && record(word: "") >= 3
     }
 }
 
 @available(macOS 10.13, *)
-class MetalPauseDetector {
+class MetalPauseDetector: PauseDetector {
     private let metalDetector: MetalDriftDetector?
-    private let threshold: TimeInterval
-    private var lastWordTime: TimeInterval?
 
     // Vectorized timestamp processing
     private var timestamps: [Float] = []
     private var pauseBuffer: [Float] = []
 
-    init(threshold: TimeInterval = 0.3) {
-        self.threshold = threshold
+    override init(threshold: TimeInterval = 0.3) {
         metalDetector = MetalDriftDetector()
+        super.init(threshold: threshold)
     }
 
-    func record(timestamp: TimeInterval) -> Bool {
+    override func record(timestamp: TimeInterval) -> Bool {
         defer { lastWordTime = timestamp }
 
         guard let prev = lastWordTime else { return false }
@@ -266,21 +262,20 @@ class MetalPauseDetector {
 }
 
 @available(macOS 10.13, *)
-class MetalPaceAnalyzer {
+class MetalPaceAnalyzer: PaceAnalyzer {
     private let metalDetector: MetalDriftDetector?
-    private var baselineWPM: Float = 150
     private let window = RingBuffer<Float>(capacity: 12)
-    private let secondsPerBucket: Float = 5
 
     // SIMD processing arrays
     private var wpmArray: [Float] = []
     private var baselineArray: [Float] = []
 
-    init() {
+    override init() {
         metalDetector = MetalDriftDetector()
+        super.init()
     }
 
-    func record(words: Int) -> PaceMetrics {
+    override func record(words: Int) -> PaceMetrics {
         let wps = Float(words) / secondsPerBucket
         let currentWPM = wps * 60
 
@@ -334,9 +329,9 @@ enum DetectorFactory {
         if #available(macOS 10.13, *), MTLCreateSystemDefaultDevice() != nil {
             print("✅ Using Metal-accelerated detectors")
             return (
-                MetalFillerDetector() as! FillerDetector,
-                MetalPauseDetector() as! PauseDetector,
-                MetalPaceAnalyzer() as! PaceAnalyzer
+                MetalFillerDetector(),
+                MetalPauseDetector(),
+                MetalPaceAnalyzer()
             )
         } else {
             print("⚠️  Using CPU fallback detectors")

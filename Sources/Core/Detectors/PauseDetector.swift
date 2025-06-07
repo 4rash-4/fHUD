@@ -6,11 +6,12 @@
 
 import Foundation
 
-public final class PauseDetector {
-    private let threshold: TimeInterval
-    private var lastWordTime: TimeInterval?
+public class PauseDetector {
+    // Expose properties for subclasses
+    let threshold: TimeInterval
+    var lastWordTime: TimeInterval?
     // Pre-calculate threshold comparison
-    private var thresholdComparison: TimeInterval
+    var thresholdComparison: TimeInterval
 
     public init(threshold: TimeInterval = 0.3) {
         self.threshold = threshold

@@ -7,9 +7,12 @@
 
 import Foundation
 
-public final class FillerDetector {
-    private let fillers: Set<String> = ["um", "uh", "erm", "hmm", "like"] // tweak anytime
-    private let window = RingBuffer<String>(capacity: 30) // last 30 words
+public class FillerDetector {
+    // Allow subclass access to common properties
+    let fillers: Set<String> = ["um", "uh", "erm", "hmm", "like"] // tweak anytime
+    let window = RingBuffer<String>(capacity: 30) // last 30 words
+
+    public init() {}
 
     /// Feed *one* lowercase word at a time.
     public func record(word: String) -> Int {

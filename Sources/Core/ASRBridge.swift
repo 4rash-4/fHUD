@@ -10,8 +10,6 @@
 import Combine
 import Foundation
 import Network
-import Foundation
-import Network
 
 /// Enhanced bridge that handles real-time Parakeet transcription and Gemma concept extraction
 @MainActor
@@ -48,6 +46,9 @@ final class ASRBridge: ObservableObject {
 
     private var ringBuffer: SharedRingBuffer?
     private var ringCancellable: AnyCancellable?
+    private lazy var eventBatcher = DriftEventBatcher { [weak self] batch in
+        self?.sendEventBatch(batch)
+    }
 
     init(mic: MicPipeline) {
         self.mic = mic
@@ -144,6 +145,16 @@ final class ASRBridge: ObservableObject {
                 self.conceptBuffer.append(event.w)
                 if self.conceptBuffer.count > self.conceptBufferLimit {
                     self.conceptBuffer.removeFirst()
+                }
+                if let mic = self.mic {
+                    let driftEvent = DriftEvent(
+                        fillerCount: mic.fillerCount,
+                        paceWPM: Int(mic.pace?.currentWPM ?? 0),
+                        didPause: mic.didPause,
+                        didRepair: mic.didRepair,
+                        timestamp: event.t
+                    )
+                    self.eventBatcher.add(driftEvent)
                 }
                 // Trigger concept extraction periodically
                 let now = Date()
@@ -373,6 +384,20 @@ final class ASRBridge: ObservableObject {
         isReconnecting = false
         webSocketTask?.cancel(with: .goingAway, reason: nil)
         webSocketTask = nil
+    }
+
+    private func sendEventBatch(_ batch: EventBatch) {
+        guard let conceptSocket = conceptSocket else { return }
+        do {
+            let data = try JSONEncoder().encode(batch)
+            conceptSocket.send(.data(data)) { error in
+                if let error {
+                    print("❌ Failed to send event batch: \(error)")
+                }
+            }
+        } catch {
+            print("❌ Failed to encode event batch: \(error)")
+        }
     }
 }
 

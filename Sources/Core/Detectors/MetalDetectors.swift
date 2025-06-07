@@ -175,7 +175,7 @@ class MetalFillerDetector {
         metalDetector = MetalDriftDetector()
 
         // Pre-compute filler word hashes for fast comparison
-        fillerHashes = Set(fillers.map { $0.hash.magnitude })
+        fillerHashes = Set(fillers.map { UInt32(bitPattern: $0.hashValue) })
     }
 
     func record(word: String) -> Int {
@@ -191,7 +191,7 @@ class MetalFillerDetector {
 
     private func metalAcceleratedCount(word: String) -> Int {
         // GPU-accelerated filler detection
-        let wordHash = word.lowercased().hash.magnitude
+        let wordHash = UInt32(bitPattern: word.lowercased().hashValue)
         wordHashes.append(wordHash)
 
         // Keep only recent words

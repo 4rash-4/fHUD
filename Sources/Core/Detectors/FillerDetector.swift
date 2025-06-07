@@ -8,8 +8,11 @@
 import Foundation
 
 public class FillerDetector {
+    /// Canonical set of filler words used across detector implementations.
+    public static let fillers: Set<String> = ["um", "uh", "erm", "hmm", "like"]
+
     // Allow subclass access to common properties
-    let fillers: Set<String> = ["um", "uh", "erm", "hmm", "like"] // tweak anytime
+    let fillers: Set<String> = Self.fillers
     let window = RingBuffer<String>(capacity: 30) // last 30 words
 
     public init() {}

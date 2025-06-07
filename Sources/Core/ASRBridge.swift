@@ -68,9 +68,11 @@ final class ASRBridge: ObservableObject {
     }
 
     deinit {
-        Task { @MainActor in
-            cleanup()
-        }
+        reconnectTimer?.invalidate()
+        reconnectTimer = nil
+        webSocket?.cancel(with: .goingAway, reason: nil)
+        conceptSocket?.cancel(with: .goingAway, reason: nil)
+        cancellables.removeAll()
     }
 
     private func cleanup() {

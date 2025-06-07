@@ -41,7 +41,9 @@ public final class MicPipeline: ObservableObject {
     }
 
     deinit {
-        cleanup()
+        Task { @MainActor in
+            cleanup()
+        }
     }
 
     private func cleanup() {

@@ -20,11 +20,11 @@ public final class SharedRingBuffer {
 
     public init?() {
         // 1. shm_open (create if needed)
-        fd = shm_open(shmName, O_RDWR | O_CREAT, S_IRUSR | S_IWUSR)
+        fd = shm_open(shmName, O_RDWR | O_CREAT, mode_t(S_IRUSR | S_IWUSR))
         if fd == -1 {
             // Attempt to unlink stale segment and retry once
             shm_unlink(shmName)
-            fd = shm_open(shmName, O_RDWR | O_CREAT, S_IRUSR | S_IWUSR)
+            fd = shm_open(shmName, O_RDWR | O_CREAT, mode_t(S_IRUSR | S_IWUSR))
             guard fd != -1 else {
                 print("SharedRingBuffer: Failed to create shared memory")
                 return nil

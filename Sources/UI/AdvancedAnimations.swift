@@ -1,9 +1,9 @@
 // MARK: - AdvancedAnimations.swift
 //
 // Houses the custom animation engine responsible for concept particles
-// and ambient connections.  The engine uses CADisplayLink and several
-// memory conscious techniques (object pools, adaptive quality) to run
-// smoothly on low end hardware.
+// and ambient connections. The engine uses CADisplayLink and several
+// memory‐conscious techniques (object pools, adaptive quality) to run
+// smoothly on low-end hardware.
 
 import Combine
 import simd
@@ -26,10 +26,7 @@ struct AnimatedParticle: Identifiable {
     var targetPosition: simd_float2?
 
     enum ParticleType {
-        case thought
-        case connection
-        case drift
-        case crystallization
+        case thought, connection, drift, crystallization
     }
 }
 
@@ -68,12 +65,13 @@ struct AnimatedConnection: Identifiable {
     var pulseOffset: Float = 0
 
     mutating func updateControlPoints() {
-        let midPoint = (startPoint + endPoint) * 0.5
-        let perpendicular = simd_normalize(simd_float2(-(endPoint.y - startPoint.y), endPoint.x - startPoint.x))
-        let offset = perpendicular * (sin(age * 0.5) * 20 + 40)
-
-        controlPoint1 = startPoint + (midPoint - startPoint) * 0.3 + offset * 0.7
-        controlPoint2 = endPoint + (midPoint - endPoint) * 0.3 + offset * 0.3
+        let mid = (startPoint + endPoint) * 0.5
+        let perp = simd_normalize(simd_float2(
+            -(endPoint.y - startPoint.y),
+             endPoint.x - startPoint.x))
+        let offset = perp * (sin(age * 0.5) * 20 + 40)
+        controlPoint1 = startPoint + (mid - startPoint) * 0.3 + offset * 0.7
+        controlPoint2 = endPoint   + (mid - endPoint)   * 0.3 + offset * 0.3
     }
 }
 
@@ -103,18 +101,18 @@ class AnimationEngine: ObservableObject {
     private let maxConnections = 50
     private var memoryPressureThreshold: Double = 0.8
 
-    // For memory-limited collections
+    // Internal pools
     private var particles: [AnimatedParticle] = []
     private var connections: [AnimatedConnection] = []
 
     // Cassette Futurism Colors
     static let amberPrimary = Color(red: 0.96, green: 0.65, blue: 0.14)
-    static let amberGlow = Color(red: 1.0, green: 0.8, blue: 0.4)
+    static let amberGlow    = Color(red: 1.0, green: 0.8,  blue: 0.4)
     static let charcoalDark = Color(red: 0.12, green: 0.12, blue: 0.12)
-    static let charcoalMid = Color(red: 0.2, green: 0.2, blue: 0.2)
+    static let charcoalMid  = Color(red: 0.20, green: 0.20, blue: 0.20)
 
     deinit {
-        // synchronously tear down
+        // synchronous teardown
         displayLink?.invalidate()
         displayLink = nil
         timer?.cancel()
@@ -123,12 +121,11 @@ class AnimationEngine: ObservableObject {
         animatedConnections.removeAll()
     }
 
-
     func startEngine() {
         guard displayLink == nil && timer == nil else { return }
 
         #if canImport(UIKit)
-        displayLink = CADisplayLink(target: self, selector: #selector(frame))
+        displayLink = CADisplayLink(target: self, selector: #selector(frame(_:)))
         displayLink?.preferredFramesPerSecond = targetFPS
         displayLink?.add(to: .main, forMode: .common)
         #else
@@ -143,7 +140,7 @@ class AnimationEngine: ObservableObject {
         timer?.resume()
         #endif
 
-        print("🎬 Animation engine started - targeting \(targetFPS)fps")
+        print("🎬 Animation engine started – targeting \(targetFPS)fps")
         initializeAmbientParticles()
     }
 
@@ -152,7 +149,7 @@ class AnimationEngine: ObservableObject {
         displayLink = nil
         timer?.cancel()
         timer = nil
-        print("🎬 Animation engine stopped - final FPS: \(String(format: "%.1f", currentFPS))")
+        print("🎬 Animation engine stopped – final FPS: \(String(format: "%.1f", currentFPS))")
     }
 
     @objc private func frame(_ link: CADisplayLink) {
@@ -162,74 +159,54 @@ class AnimationEngine: ObservableObject {
     }
 
     private func frameTimer() async {
-        let currentTime = CACurrentMediaTime()
-        let deltaTime = currentTime - lastFrameTime
-
-        // Skip frame if delta is too large (e.g., app was backgrounded)
-        guard deltaTime < 0.1 else {
-            lastFrameTime = currentTime
+        let now = CACurrentMediaTime()
+        let delta = now - lastFrameTime
+        guard delta < 0.1 else {
+            lastFrameTime = now
             return
         }
+        lastFrameTime = now
 
-        lastFrameTime = currentTime
-
-        // Performance tracking
-        trackPerformance(currentTime: currentTime, deltaTime: deltaTime)
-
-        // Update animations
-        updateAllAnimations(deltaTime: deltaTime)
-
-        // Global effects
-        updateGlobalEffects(deltaTime: deltaTime)
-
-        // Enforce memory limits under pressure
+        trackPerformance(currentTime: now, deltaTime: delta)
+        updateAllAnimations(deltaTime: delta)
+        updateGlobalEffects(deltaTime: delta)
         enforceMemoryLimits()
     }
 
     private func trackPerformance(currentTime: CFTimeInterval, deltaTime _: CFTimeInterval) {
         frameCount += 1
-
         if currentTime - lastFPSCheck >= 1.0 {
             currentFPS = Double(frameCount) / (currentTime - lastFPSCheck)
             frameCount = 0
             lastFPSCheck = currentTime
-
-            // Adaptive quality
             adaptQualityForPerformance()
         }
     }
 
     private func adaptQualityForPerformance() {
         if currentFPS < 30 && animatedParticles.count > 20 {
-            // Reduce particle count for performance
-            let keepCount = min(15, animatedParticles.count)
-            animatedParticles = Array(animatedParticles.prefix(keepCount))
-            print("⚡ Reduced particles for performance - FPS: \(String(format: "%.1f", currentFPS))")
+            animatedParticles = Array(animatedParticles.prefix(15))
+            print("⚡ Reduced particles – FPS: \(String(format: "%.1f", currentFPS))")
         } else if currentFPS > 55 && animatedParticles.count < 30 {
-            // Can handle more particles
             targetFPS = 60
         }
     }
 
     private func updateAllAnimations(deltaTime: CFTimeInterval) {
         let dt = Float(deltaTime)
-
-        // Update particles - iterate backwards for safe removal
+        // Particles
         for i in animatedParticles.indices.reversed() {
             updateParticlePhysics(&animatedParticles[i], deltaTime: dt)
-
-            // Remove expired particles
-            if animatedParticles[i].age >= animatedParticles[i].maxAge || animatedParticles[i].alpha <= 0.01 {
+            if animatedParticles[i].age >= animatedParticles[i].maxAge ||
+               animatedParticles[i].alpha <= 0.01 {
                 animatedParticles.remove(at: i)
             }
         }
-
-        // Update connections - iterate backwards for safe removal
+        // Connections
         for i in animatedConnections.indices.reversed() {
             updateConnectionFlow(&animatedConnections[i], deltaTime: dt)
-
-            // Remove expired connections
-            if animatedConnections[i].age >= animatedConnections[i].maxAge || animatedConnections[i].strength <= 0.01 {
+            if animatedConnections[i].age >= animatedConnections[i].maxAge ||
+               animatedConnections[i].strength <= 0.01 {
                 animatedConnections.remove(at: i)
             }
         }
@@ -238,20 +215,13 @@ class AnimationEngine: ObservableObject {
     private func updateGlobalEffects(deltaTime: CFTimeInterval) {
         let dt = Float(deltaTime)
         noiseOffset += dt * 0.5
-
-        // Subtle ambient pulse (breathing effect)
         ambientPulse = sin(noiseOffset * 0.8) * 0.3 + 0.7
-
-        // Global flow for connections
         globalFlow += dt * 0.3
-        if globalFlow > 1.0 {
-            globalFlow -= 1.0
-        }
+        if globalFlow > 1.0 { globalFlow -= 1.0 }
     }
 
     // MARK: - Particle Physics
 
-    // Precalculate damping factors
     private let dampingFactors: [AnimatedParticle.ParticleType: Float] = [
         .thought: 0.98,
         .connection: 0.95,
@@ -259,364 +229,269 @@ class AnimationEngine: ObservableObject {
         .crystallization: 0.96,
     ]
 
-    // Optimize particle physics
-    private func updateParticlePhysics(_ particle: inout AnimatedParticle, deltaTime: Float) {
-        // Use SIMD vector operations
-        let xAccel = particle.acceleration.x
-        let yAccel = particle.acceleration.y
-        let acceleration = simd_make_float2(xAccel, yAccel)
-        particle.position += particle.velocity * deltaTime
-        particle.velocity += acceleration * deltaTime
-        // Use precalculated values
-        if let damping = dampingFactors[particle.particleType] {
-            particle.velocity *= damping
+    private func updateParticlePhysics(_ particle: inout AnimatedParticle, deltaTime dt: Float) {
+        let accel = simd_make_float2(particle.acceleration.x, particle.acceleration.y)
+        particle.position += particle.velocity * dt
+        particle.velocity += accel * dt
+        if let d = dampingFactors[particle.particleType] {
+            particle.velocity *= d
         }
     }
 
     private func applyFlockingBehavior(_ particle: inout AnimatedParticle) {
         guard particle.particleType == .thought else { return }
-
-        var separation = simd_float2.zero
-        var alignment = simd_float2.zero
-        var cohesion = simd_float2.zero
-        var neighborCount = 0
-
-        let perceptionRadius: Float = 60.0
-
-        for other in animatedParticles {
-            if other.id == particle.id || other.particleType != .thought { continue }
-
-            let distance = simd_distance(particle.position, other.position)
-            if distance < perceptionRadius && distance > 0 {
-                // Separation - avoid crowding
+        var sep = simd_float2.zero, ali = simd_float2.zero, coh = simd_float2.zero
+        var count = 0
+        let radius: Float = 60
+        for other in animatedParticles where other.id != particle.id {
+            let dist = simd_distance(particle.position, other.position)
+            if dist < radius && dist > 0 {
                 let diff = particle.position - other.position
-                separation += simd_normalize(diff) / max(distance, 0.1)
-
-                // Alignment - match velocity
-                alignment += other.velocity
-
-                // Cohesion - move toward center
-                cohesion += other.position
-
-                neighborCount += 1
+                sep += simd_normalize(diff) / max(dist, 0.1)
+                ali += other.velocity
+                coh += other.position
+                count += 1
             }
         }
-
-        if neighborCount > 0 {
-            let neighborCountF = Float(neighborCount)
-
-            // Apply flocking forces with subtle influence
-            particle.acceleration += separation * 0.15
-            particle.acceleration += (alignment / neighborCountF - particle.velocity) * 0.08
-            particle.acceleration += (cohesion / neighborCountF - particle.position) * 0.03
+        if count > 0 {
+            let n = Float(count)
+            particle.acceleration += sep * 0.15
+            particle.acceleration += (ali / n - particle.velocity) * 0.08
+            particle.acceleration += (coh / n - particle.position) * 0.03
         }
     }
 
     private func applyBoundaryForces(_ particle: inout AnimatedParticle) {
         let bounds = CGRect(x: 0, y: 0, width: 800, height: 600)
-        let margin: Float = 80
-        let force: Float = 0.2
-
-        // Gentle boundary repulsion with easing
-        if particle.position.x < margin {
-            let strength = (margin - particle.position.x) / margin
-            particle.acceleration.x += strength * strength * force
+        let margin: Float = 80, force: Float = 0.2
+        let x = particle.position.x, y = particle.position.y
+        if x < margin {
+            let s = (margin - x) / margin
+            particle.acceleration.x += s * s * force
         }
-        if particle.position.x > Float(bounds.width) - margin {
-            let strength = (particle.position.x - (Float(bounds.width) - margin)) / margin
-            particle.acceleration.x -= strength * strength * force
+        if x > Float(bounds.width) - margin {
+            let s = (x - (Float(bounds.width) - margin)) / margin
+            particle.acceleration.x -= s * s * force
         }
-        if particle.position.y < margin {
-            let strength = (margin - particle.position.y) / margin
-            particle.acceleration.y += strength * strength * force
+        if y < margin {
+            let s = (margin - y) / margin
+            particle.acceleration.y += s * s * force
         }
-        if particle.position.y > Float(bounds.height) - margin {
-            let strength = (particle.position.y - (Float(bounds.height) - margin)) / margin
-            particle.acceleration.y -= strength * strength * force
+        if y > Float(bounds.height) - margin {
+            let s = (y - (Float(bounds.height) - margin)) / margin
+            particle.acceleration.y -= s * s * force
         }
     }
 
     private func applyDrift(_ particle: inout AnimatedParticle, dt: Float) {
-        // Subtle Perlin noise-like drift
-        let time = particle.age + noiseOffset
-        let frequency: Float = 0.7
-        let amplitude: Float = particle.particleType == .drift ? 15.0 : 5.0
-
-        let noiseX = sin(time * frequency + Float(particle.id.hashValue) * 0.01) * amplitude
-        let noiseY = cos(time * frequency * 1.3 + Float(particle.id.hashValue) * 0.01) * amplitude
-
+        let t = particle.age + noiseOffset
+        let amp: Float = (particle.particleType == .drift ? 15 : 5)
+        let noiseX = sin(t * 0.7 + Float(particle.id.hashValue) * 0.01) * amp
+        let noiseY = cos(t * 1.3 + Float(particle.id.hashValue) * 0.01) * amp
         particle.acceleration += simd_float2(noiseX, noiseY) * 0.1
-
-        // Update pulse phase for visual effects
         particle.pulsePhase += dt * 2.0
-        if particle.pulsePhase > Float.pi * 2 {
-            particle.pulsePhase -= Float.pi * 2
+        if particle.pulsePhase > .pi * 2 {
+            particle.pulsePhase -= .pi * 2
         }
     }
 
     private func applyTargetSeeking(_ particle: inout AnimatedParticle) {
         guard let target = particle.targetPosition else { return }
-
         let desired = target - particle.position
-        let distance = simd_length(desired)
-
-        if distance > 5.0 {
-            let seekForce = simd_normalize(desired) * 0.3
-            particle.acceleration += seekForce
+        let dist = simd_length(desired)
+        if dist > 5 {
+            particle.acceleration += simd_normalize(desired) * 0.3
         } else {
-            // Arrived at target
             particle.targetPosition = nil
         }
     }
 
     private func updateParticleLifecycle(_ particle: inout AnimatedParticle) {
-        let ageRatio = particle.age / particle.maxAge
-
-        // Fade out as particle ages
-        particle.alpha = max(0, 1 - ageRatio * ageRatio)
-
-        // Size pulsing based on type
-        let basePulse = sin(particle.pulsePhase) * 0.3 + 1.0
+        let ratio = particle.age / particle.maxAge
+        particle.alpha = max(0, 1 - ratio * ratio)
+        let pulse = sin(particle.pulsePhase) * 0.3 + 1.0
         switch particle.particleType {
         case .thought:
-            particle.size = 3.0 * basePulse
+            particle.size = 3.0 * pulse
         case .connection:
-            particle.size = 1.5 * basePulse
+            particle.size = 1.5 * pulse
         case .drift:
-            particle.size = 2.0 * basePulse * 0.7
+            particle.size = 2.0 * pulse * 0.7
         case .crystallization:
-            particle.size = 4.0 * basePulse * 1.2
+            particle.size = 4.0 * pulse * 1.2
         }
     }
 
     // MARK: - Connection Animation
 
-    private func updateConnectionFlow(_ connection: inout AnimatedConnection, deltaTime: Float) {
-        connection.age += deltaTime
-
-        // Update flow progress
-        connection.flowProgress += deltaTime * 0.8
-        if connection.flowProgress > 1.0 {
-            connection.flowProgress -= 1.0
-        }
-
-        // Update control points for organic curves
-        connection.updateControlPoints()
-
-        // Fade based on age
-        let ageRatio = connection.age / connection.maxAge
-        connection.strength = max(0, 1 - ageRatio * ageRatio)
-
-        // Update pulse offset
-        connection.pulseOffset += deltaTime * 3.0
-        if connection.pulseOffset > Float.pi * 2 {
-            connection.pulseOffset -= Float.pi * 2
+    private func updateConnectionFlow(_ conn: inout AnimatedConnection, deltaTime dt: Float) {
+        conn.age += dt
+        conn.flowProgress += dt * 0.8
+        if conn.flowProgress > 1.0 { conn.flowProgress -= 1.0 }
+        conn.updateControlPoints()
+        let ratio = conn.age / conn.maxAge
+        conn.strength = max(0, 1 - ratio * ratio)
+        conn.pulseOffset += dt * 3.0
+        if conn.pulseOffset > .pi * 2 {
+            conn.pulseOffset -= .pi * 2
         }
     }
 
     // MARK: - Public Interface
 
-    func addThoughtParticle(at position: CGPoint, concept: String) {
+    func addThoughtParticle(at pos: CGPoint, concept: String) {
         guard animatedParticles.count < maxParticles else { return }
-
-        let particle = AnimatedParticle(
-            position: simd_float2(Float(position.x), Float(position.y)),
-            velocity: simd_float2(
-                Float.random(in: -20 ... 20),
-                Float.random(in: -20 ... 20)
-            ),
-            maxAge: Float.random(in: 15 ... 25),
+        let p = simd_float2(Float(pos.x), Float(pos.y))
+        let v = simd_float2(
+            Float.random(in: -20...20),
+            Float.random(in: -20...20)
+        )
+        let part = AnimatedParticle(
+            position: p,
+            velocity: v,
+            maxAge: Float.random(in: 15...25),
             concept: concept,
             particleType: .thought,
-            pulsePhase: Float.random(in: 0 ... Float.pi * 2)
+            pulsePhase: Float.random(in: 0...Float.pi*2)
         )
-        animatedParticles.append(particle)
+        animatedParticles.append(part)
     }
 
     func addDriftParticles(count: Int, bounds: CGRect) {
-        let particlesToAdd = min(count, maxParticles - animatedParticles.count)
-
-        for _ in 0 ..< particlesToAdd {
-            let particle = AnimatedParticle(
-                position: simd_float2(
-                    Float.random(in: 0 ... Float(bounds.width)),
-                    Float.random(in: 0 ... Float(bounds.height))
-                ),
-                velocity: simd_float2(
-                    Float.random(in: -10 ... 10),
-                    Float.random(in: -10 ... 10)
-                ),
-                maxAge: Float.random(in: 20 ... 40),
-                particleType: .drift,
-                pulsePhase: Float.random(in: 0 ... Float.pi * 2)
+        let toAdd = min(count, maxParticles - animatedParticles.count)
+        for _ in 0..<toAdd {
+            let x = Float.random(in: 0...Float(bounds.width))
+            let y = Float.random(in: 0...Float(bounds.height))
+            let v = simd_float2(
+                Float.random(in: -10...10),
+                Float.random(in: -10...10)
             )
-            animatedParticles.append(particle)
+            let part = AnimatedParticle(
+                position: simd_float2(x, y),
+                velocity: v,
+                maxAge: Float.random(in: 20...40),
+                particleType: .drift,
+                pulsePhase: Float.random(in: 0...Float.pi*2)
+            )
+            animatedParticles.append(part)
         }
     }
 
-    func addConnection(from startPoint: CGPoint, to endPoint: CGPoint) {
+    func addConnection(from: CGPoint, to: CGPoint) {
         guard animatedConnections.count < maxConnections else { return }
-
-        var connection = AnimatedConnection(
-            startPoint: simd_float2(Float(startPoint.x), Float(startPoint.y)),
-            endPoint: simd_float2(Float(endPoint.x), Float(endPoint.y)),
+        var c = AnimatedConnection(
+            startPoint: simd_float2(Float(from.x), Float(from.y)),
+            endPoint:   simd_float2(Float(to.x),   Float(to.y)),
             controlPoint1: .zero,
             controlPoint2: .zero,
-            maxAge: Float.random(in: 10 ... 20),
-            pulseOffset: Float.random(in: 0 ... Float.pi * 2)
+            maxAge: Float.random(in: 10...20),
+            pulseOffset: Float.random(in: 0...Float.pi*2)
         )
-        connection.updateControlPoints()
-        animatedConnections.append(connection)
+        c.updateControlPoints()
+        animatedConnections.append(c)
     }
 
-    func crystallizeConcept(at position: CGPoint, concept: String) {
+    func crystallizeConcept(at pos: CGPoint, concept: String) {
         guard animatedParticles.count + 9 <= maxParticles else { return }
-
-        // Create a special crystallization particle
-        let particle = AnimatedParticle(
-            position: simd_float2(Float(position.x), Float(position.y)),
+        let base = simd_float2(Float(pos.x), Float(pos.y))
+        let cryst = AnimatedParticle(
+            position: base,
             velocity: .zero,
-            maxAge: 45.0,
+            maxAge: 45,
             concept: concept,
             particleType: .crystallization,
             pulsePhase: 0,
-            size: 5.0
+            size: 5
         )
-        animatedParticles.append(particle)
-
-        // Add radiating connection particles
-        for i in 0 ..< 8 {
-            let angle = Float(i) * Float.pi * 2 / 8
-            let radius: Float = 40
-            let connectionPos = simd_float2(
-                Float(position.x) + cos(angle) * radius,
-                Float(position.y) + sin(angle) * radius
+        animatedParticles.append(cryst)
+        for i in 0..<8 {
+            let angle = Float(i) * (.pi*2) / 8
+            let r: Float = 40
+            let p = simd_float2(
+                base.x + cos(angle)*r,
+                base.y + sin(angle)*r
             )
-
-            let connectionParticle = AnimatedParticle(
-                position: connectionPos,
-                velocity: simd_float2(cos(angle) * 5, sin(angle) * 5),
-                maxAge: 20.0,
+            let cp = AnimatedParticle(
+                position: p,
+                velocity: simd_float2(cos(angle)*5, sin(angle)*5),
+                maxAge: 20,
                 particleType: .connection,
-                pulsePhase: Float(i) * 0.5
+                pulsePhase: Float(i)*0.5
             )
-            animatedParticles.append(connectionParticle)
+            animatedParticles.append(cp)
         }
     }
 
-    func setParticleTarget(_ particleId: UUID, target: CGPoint) {
-        if let index = animatedParticles.firstIndex(where: { $0.id == particleId }) {
-            animatedParticles[index].targetPosition = simd_float2(Float(target.x), Float(target.y))
+    func setParticleTarget(_ id: UUID, target: CGPoint) {
+        if let idx = animatedParticles.firstIndex(where: { $0.id == id }) {
+            animatedParticles[idx].targetPosition = simd_float2(Float(target.x), Float(target.y))
         }
     }
 
     private func initializeAmbientParticles() {
-        let bounds = CGRect(x: 0, y: 0, width: 800, height: 600)
-        addDriftParticles(count: 12, bounds: bounds)
+        addDriftParticles(count: 12, bounds: CGRect(x: 0, y: 0, width: 800, height: 600))
     }
 
     // MARK: - Memory Pressure Handling
 
     func handleMemoryPressure() {
-        // Reduce particle count
         if animatedParticles.count > 30 {
             animatedParticles = Array(animatedParticles.prefix(20))
         }
-
-        // Reduce connection count
         if animatedConnections.count > 10 {
             animatedConnections = Array(animatedConnections.prefix(5))
         }
-
-        print("⚠️ Memory pressure handled - reduced animations")
+        print("⚠️ Memory pressure handled")
     }
 
-    func addParticle(_ particle: AnimatedParticle) {
-        // Remove oldest particles if at limit
+    func addParticle(_ p: AnimatedParticle) {
         if particles.count >= maxParticles {
-            let oldestIndex = particles.firstIndex { $0.age == particles.map(\.age).max() }
-            if let index = oldestIndex {
-                particles.remove(at: index)
-            }
+            particles.removeFirst()
         }
-        particles.append(particle)
+        particles.append(p)
     }
 
-    func addConnection(_ connection: AnimatedConnection) {
-        // Remove oldest connections if at limit
+    func addConnection(_ c: AnimatedConnection) {
         if connections.count >= maxConnections {
             connections.removeFirst()
         }
-        connections.append(connection)
-    }
-
-    private func checkMemoryPressure() {
-        let memoryUsage = getCurrentMemoryUsage()
-        if memoryUsage > memoryPressureThreshold {
-            // Reduce particle count by 25%
-            let removeCount = particles.count / 4
-            particles.removeFirst(removeCount)
-
-            // Reduce connection count by 25%
-            let connectionRemoveCount = connections.count / 4
-            connections.removeFirst(connectionRemoveCount)
-
-            print("⚠️ Memory pressure detected, reduced particles and connections")
-        }
+        connections.append(c)
     }
 
     private func enforceMemoryLimits() {
-        let pressure = getCurrentMemoryUsage()
-        if pressure > 0.7 {
-            let removeCount = animatedParticles.count * 3 / 10
-            if removeCount > 0 {
-                animatedParticles.removeFirst(removeCount)
-            }
+        let usage = getCurrentMemoryUsage()
+        if usage > 0.7 {
+            let rem = animatedParticles.count * 3 / 10
+            if rem > 0 { animatedParticles.removeFirst(rem) }
         }
     }
 
     private func getCurrentMemoryUsage() -> Double {
         var info = mach_task_basic_info()
         var count = mach_msg_type_number_t(MemoryLayout<mach_task_basic_info>.size) / 4
-
-        let kerr: kern_return_t = withUnsafeMutablePointer(to: &info) {
+        let kerr = withUnsafeMutablePointer(to: &info) {
             $0.withMemoryRebound(to: integer_t.self, capacity: 1) {
                 task_info(mach_task_self_,
                           task_flavor_t(MACH_TASK_BASIC_INFO),
-                          $0,
-                          &count)
+                          $0, &count)
             }
         }
-
         if kerr == KERN_SUCCESS {
-            let usedMemory = Double(info.resident_size) / (1024 * 1024 * 1024) // GB
-            return usedMemory / 8.0 // Assume 8GB total, adjust as needed
+            let used = Double(info.resident_size) / (1024*1024*1024)
+            return used / 8.0
         }
-        return 0.0
+        return 0
     }
 
-    // Particle object pool for memory efficiency
     private class ParticlePool {
         private var pool: [AnimatedParticle] = []
         private let maxPoolSize: Int
-
-        init(maxPoolSize: Int) {
-            self.maxPoolSize = maxPoolSize
-        }
-
+        init(maxPoolSize: Int) { self.maxPoolSize = maxPoolSize }
         func acquire() -> AnimatedParticle {
-            if let particle = pool.popLast() {
-                return particle
-            } else {
-                return AnimatedParticle(position: .zero)
-            }
+            pool.popLast() ?? AnimatedParticle(position: .zero)
         }
-
-        func release(_ particle: AnimatedParticle) {
-            if pool.count < maxPoolSize {
-                pool.append(particle)
-            }
+        func release(_ p: AnimatedParticle) {
+            if pool.count < maxPoolSize { pool.append(p) }
         }
     }
-
 }

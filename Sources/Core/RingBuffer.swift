@@ -11,8 +11,12 @@ public final class RingBuffer<Element> {
     private var buffer: [Element?]
     private var head: Int = 0
     private var tail: Int = 0
-    private var count: Int = 0
-    private let capacity: Int
+
+    /// Number of elements currently stored (thread‑safe read)
+    public private(set) var count: Int = 0
+
+    /// Maximum size of the ring (immutable after init)
+    public let capacity: Int
 
     // Use a more efficient lock
     private let lock = NSLock()

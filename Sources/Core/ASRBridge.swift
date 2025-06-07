@@ -1,3 +1,14 @@
+// ConcurrencyShims.swift
+//
+// Minimal shims so we can access Timer / AnyCancellable from
+// non‑isolated contexts (e.g. default deinits) without warnings.
+
+import Foundation
+import Combine
+
+extension Timer: @unchecked Sendable {}
+extension AnyCancellable: @unchecked Sendable {}
+
 // MARK: - ASRBridge.swift
 //
 // Bridges the Python back end with the SwiftUI interface.  This class

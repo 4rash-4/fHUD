@@ -26,6 +26,7 @@ from parakeet_mlx_server import ParakeetServer  # your existing ASR harness
 # --- Logging and Error Handling ---
 import logging
 from contextlib import contextmanager
+from threading import local
 
 # Configure logging
 logging.basicConfig(
@@ -38,11 +39,26 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+# --- Thread-safe SQLite Helper ---
+class ThreadSafeDB:
+    def __init__(self, db_path: str):
+        self.db_path = db_path
+        self.local = local()
+
+    def get_connection(self) -> sqlite3.Connection:
+        """Return a SQLite connection specific to the current thread."""
+        conn = getattr(self.local, "conn", None)
+        if conn is None:
+            conn = sqlite3.connect(self.db_path)
+            self.local.conn = conn
+        return conn
+
 @contextmanager
-def safe_database_operation():
+def safe_database_operation(conn: sqlite3.Connection):
     """Context manager for safe database operations"""
     try:
         yield
+        conn.commit()
     except sqlite3.Error as e:
         logger.error(f"Database error: {e}")
         conn.rollback()
@@ -79,25 +95,32 @@ def release_shared_lock():
 
 # --- SQLite Persistence ---
 DB_PATH = "concepts.db"
-conn = sqlite3.connect(DB_PATH, check_same_thread=False)
-cursor = conn.cursor()
-cursor.execute("""
-CREATE TABLE IF NOT EXISTS transcripts (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    timestamp TEXT NOT NULL,
-    text TEXT NOT NULL
-);
-""")
-cursor.execute("""
-CREATE TABLE IF NOT EXISTS concepts (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    transcript_id INTEGER NOT NULL,
-    concept TEXT NOT NULL,
-    timestamp TEXT NOT NULL,
-    FOREIGN KEY(transcript_id) REFERENCES transcripts(id)
-);
-""")
-conn.commit()
+db = ThreadSafeDB(DB_PATH)
+
+# Initialize database schema once at startup
+with sqlite3.connect(DB_PATH) as init_conn:
+    cursor = init_conn.cursor()
+    cursor.execute(
+        """
+        CREATE TABLE IF NOT EXISTS transcripts (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            timestamp TEXT NOT NULL,
+            text TEXT NOT NULL
+        );
+        """
+    )
+    cursor.execute(
+        """
+        CREATE TABLE IF NOT EXISTS concepts (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            transcript_id INTEGER NOT NULL,
+            concept TEXT NOT NULL,
+            timestamp TEXT NOT NULL,
+            FOREIGN KEY(transcript_id) REFERENCES transcripts(id)
+        );
+        """
+    )
+    init_conn.commit()
 
 import orjson  # Faster JSON library
 from functools import lru_cache
@@ -192,13 +215,14 @@ async def process_transcript(transcript: str):
         write_to_shared_memory(transcript)
 
         # Persist transcript with error handling
-        with safe_database_operation():
+        conn = db.get_connection()
+        cursor = conn.cursor()
+        with safe_database_operation(conn):
             ts = datetime.utcnow().isoformat()
             cursor.execute(
-                "INSERT INTO transcripts (timestamp, text) VALUES (?, ?)", 
+                "INSERT INTO transcripts (timestamp, text) VALUES (?, ?)",
                 (ts, transcript)
             )
-            conn.commit()
             transcript_id = cursor.lastrowid
 
         # Extract concepts with error handling
@@ -211,13 +235,12 @@ async def process_transcript(transcript: str):
         # Store concepts
         for concept in concepts:
             try:
-                with safe_database_operation():
+                with safe_database_operation(conn):
                     cts = datetime.utcnow().isoformat()
                     cursor.execute(
                         "INSERT INTO concepts (transcript_id, concept, timestamp) VALUES (?, ?, ?)",
                         (transcript_id, concept, cts),
                     )
-                    conn.commit()
 
                     # Broadcast to Swift
                     broadcast_concept({
@@ -272,6 +295,8 @@ def write_to_shared_memory(transcript: str):
 
 # --- Daily Markdown Export ---
 def export_to_markdown():
+    conn = db.get_connection()
+    cursor = conn.cursor()
     cursor.execute("SELECT id, timestamp, text FROM transcripts ORDER BY id")
     transcripts = cursor.fetchall()
     cursor.execute("SELECT transcript_id, concept, timestamp FROM concepts ORDER BY id")

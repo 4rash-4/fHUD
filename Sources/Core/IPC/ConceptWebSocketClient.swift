@@ -67,11 +67,12 @@ public final class ConceptWebSocketClient {
             guard wrapper.type == "concept" else { return }
 
             // Grab the payload on the decode queue
-            let payload = wrapper.payload
+            let payload  = wrapper.payload          // value type
+            let subject  = publisher                // capture the subject, not self
 
             // Publish on the MainActor to avoid data races
             Task { @MainActor in
-                self.publisher.send(payload)
+                subject.send(payload)
             }
 
         } catch {

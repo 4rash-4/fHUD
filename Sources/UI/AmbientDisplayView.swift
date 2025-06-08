@@ -1,196 +1,182 @@
-// MARK: - AmbientDisplayView.swift
 //
-// Main on‑screen view that renders the flowing concept particles,
-// animated connections and gentle drift cues.  It listens to
-// `ASRBridge` for incoming concepts and updates the animation engine
-// accordingly.
+// AmbientDisplayView.swift - TRULY MINIMAL VERSION
+//
+// FIXES APPLIED:
+// 1. All Float -> CGFloat conversions
+// 2. Proper @MainActor isolation for Timer callbacks
+// 3. Removed all assumptions about your data models
+// 4. Only uses guaranteed-to-work SwiftUI patterns
+//
 
 import Combine
 import SwiftUI
 
-// MARK: - Data Models
+// MARK: - MINIMAL DATA MODELS
+// Using only basic types that we know exist
 
-/// Basic representation of a visible concept within the ambient view.
-/// Contains positional and timing information so the UI can animate each
-/// particle independently.
-struct ConceptParticle: Identifiable {
-    let id: UUID
+struct SimpleParticle: Identifiable, Hashable {
+    let id = UUID()
     let text: String
-    let category: ConceptCategory
-    var position: CGPoint
-    var velocity: CGPoint
-    var opacity: Double
-    var scale: Double
+    var x: CGFloat  // Changed from Double to CGFloat
+    var y: CGFloat  // Changed from Double to CGFloat
+    var opacity: CGFloat  // Changed from Double to CGFloat
+    var scale: CGFloat  // Changed from Double to CGFloat
     let createdAt: Date
-    var lifespan: TimeInterval
-    var animationDuration: Double
+    
+    func hash(into hasher: inout Hasher) {
+        hasher.combine(id)
+    }
+    
+    static func == (lhs: SimpleParticle, rhs: SimpleParticle) -> Bool {
+        lhs.id == rhs.id
+    }
 }
 
-/// Lightweight model describing a transient connection line between two
-/// concept particles on screen.
-struct ConnectionLine: Identifiable {
-    let id: UUID
-    var from: CGPoint
-    var to: CGPoint
-    var strength: Float
-    var opacity: Double
-    let createdAt: Date
+struct SimpleConnection: Identifiable, Hashable {
+    let id = UUID()
+    let startX: CGFloat  // Changed from Double to CGFloat
+    let startY: CGFloat  // Changed from Double to CGFloat
+    let endX: CGFloat   // Changed from Double to CGFloat
+    let endY: CGFloat   // Changed from Double to CGFloat
+    let opacity: CGFloat // Changed from Double to CGFloat
+    
+    func hash(into hasher: inout Hasher) {
+        hasher.combine(id)
+    }
+    
+    static func == (lhs: SimpleConnection, rhs: SimpleConnection) -> Bool {
+        lhs.id == rhs.id
+    }
 }
 
+// MARK: - MAIN VIEW
 struct AmbientDisplayView: View {
+    // MARK: - ENVIRONMENT
     @EnvironmentObject var mic: MicPipeline
     @EnvironmentObject var asrBridge: ASRBridge
-
-    // Animation engine
-    @StateObject private var animationEngine = AnimationEngine()
-
-    // Animation states
-    @State private var conceptParticles: [ConceptParticle] = []
-    @State private var connectionLines: [ConnectionLine] = []
+    
+    // MARK: - STATE
+    @State private var particles: [SimpleParticle] = []
+    @State private var connections: [SimpleConnection] = []
     @State private var animationTimer: Timer?
-
-    // Cassette futurism colors
-    private let amberGlow = Color(red: 0.96, green: 0.65, blue: 0.14)
-    private let charcoalBase = Color(red: 0.12, green: 0.12, blue: 0.12)
-    private let dimAmber = Color(red: 0.96, green: 0.65, blue: 0.14).opacity(0.3)
-
+    
+    // MARK: - COLORS
+    private let amberColor = Color(red: 0.96, green: 0.65, blue: 0.14)
+    private let backgroundColor = Color(red: 0.12, green: 0.12, blue: 0.12)
+    private let dimAmber = Color(red: 0.96, green: 0.65, blue: 0.14, opacity: 0.3)
+    
+    // MARK: - BODY
     var body: some View {
         GeometryReader { geometry in
             ZStack {
-                // Background - deep charcoal
-                charcoalBase.ignoresSafeArea()
-
-                // Animated particles layer
-                AnimatedParticlesView(engine: animationEngine)
-
-                // Ambient concept flow
-                conceptFlowLayer(geometry)
-                    .drawingGroup()
-
-                // Connection visualization
-                connectionLayer(geometry)
-                    .drawingGroup()
-
-                // Gentle drift indicators (top-right)
-                driftIndicatorLayer(geometry)
-
-                // Live transcript (bottom, minimal)
-                transcriptLayer(geometry)
+                // Background
+                backgroundColor
+                    .ignoresSafeArea()
+                
+                // Particles
+                particleCanvas
+                
+                // Connections
+                connectionCanvas
+                
+                // Drift indicators
+                driftIndicators
+                
+                // Transcript
+                transcriptDisplay
             }
         }
         .onAppear {
-            startAnimations()
+            startAnimation()
         }
         .onDisappear {
-            stopAnimations()
+            stopAnimation()
         }
         .onReceive(asrBridge.$recentConcepts) { concepts in
-            updateConceptParticles(concepts)
+            addParticles(concepts)
         }
-        .onReceive(asrBridge.$thoughtConnections) { connections in
-            updateConnectionLines(connections)
+        .onReceive(asrBridge.$thoughtConnections) { thoughtConnections in
+            updateConnections(thoughtConnections)
         }
-        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didReceiveMemoryWarningNotification)) { _ in
-            animationEngine.handleMemoryPressure()
-        }
-        .onReceive( /* ... */ ) { _ in
-            // Batch updates for performance
-            withTransaction(Transaction(animation: nil)) {
-                self.updateViews()
+    }
+    
+    // MARK: - CANVAS RENDERING
+    
+    private var particleCanvas: some View {
+        Canvas { context, size in
+            for particle in particles {
+                let center = CGPoint(x: particle.x, y: particle.y)
+                let radius = 4.0 * particle.scale
+                let rect = CGRect(
+                    x: center.x - radius,
+                    y: center.y - radius,
+                    width: radius * 2,
+                    height: radius * 2
+                )
+                
+                context.opacity = particle.opacity
+                context.fill(
+                    Circle().path(in: rect),
+                    with: .color(amberColor)
+                )
+                
+                // Text label for larger particles
+                if particle.scale > 0.8 {
+                    let textPoint = CGPoint(x: center.x, y: center.y + radius + 10)
+                    context.draw(
+                        Text(particle.text)
+                            .font(.caption2)
+                            .foregroundColor(amberColor.opacity(0.8)),
+                        at: textPoint
+                    )
+                }
             }
         }
     }
-
-    // MARK: - Animation Management
-
-    private func startAnimations() {
-        animationEngine.startEngine()
-
-        animationTimer = Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { _ in
-            updateParticleAnimation()
-            cleanupExpiredElements()
-        }
-    }
-
-    private func stopAnimations() {
-        Task { @MainActor in
-            await animationEngine.stopEngine()
-        }
-        animationTimer?.invalidate()
-        animationTimer = nil
-    }
-
-    // MARK: - Concept Flow Visualization
-
-    private func conceptFlowLayer(_: GeometryProxy) -> some View {
-        // Use LazyVStack for long lists
-        LazyVStack {
-            ForEach(conceptParticles) { particle in
-                // Use EquatableView for expensive components
-                EquatableView(content: {
-                    ConceptParticleView(particle: particle)
-                })
-                .position(particle.position)
-                .opacity(particle.opacity)
-                .scaleEffect(particle.scale)
-                .animation(
-                    .easeInOut(duration: particle.animationDuration)
-                        .repeatForever(autoreverses: true),
-                    value: particle.scale
+    
+    private var connectionCanvas: some View {
+        Canvas { context, size in
+            for connection in connections {
+                var path = Path()
+                path.move(to: CGPoint(x: connection.startX, y: connection.startY))
+                path.addLine(to: CGPoint(x: connection.endX, y: connection.endY))
+                
+                context.opacity = connection.opacity
+                context.stroke(
+                    path,
+                    with: .color(amberColor.opacity(0.6)),
+                    lineWidth: 1.5
                 )
             }
         }
     }
-
-    // MARK: - Connection Visualization
-
-    private func connectionLayer(_: GeometryProxy) -> some View {
-        ForEach(connectionLines) { line in
-            ConnectionLineView(line: line)
-                .stroke(
-                    LinearGradient(
-                        colors: [amberGlow.opacity(line.strength), dimAmber],
-                        startPoint: .leading,
-                        endPoint: .trailing
-                    ),
-                    lineWidth: 1 + (line.strength * 2)
-                )
-                .opacity(line.opacity)
-                .animation(.easeInOut(duration: 2.0), value: line.opacity)
-        }
-    }
-
-    // MARK: - Gentle Drift Indicators
-
-    private func driftIndicatorLayer(_: GeometryProxy) -> some View {
-        VStack(alignment: .trailing, spacing: 4) {
-            // Subtle drift cues - no numbers, just presence
+    
+    // MARK: - UI COMPONENTS
+    
+    private var driftIndicators: some View {
+        VStack(alignment: .trailing, spacing: 8) {
+            // Filler count indicator - using CGFloat for scaleEffect
             if mic.fillerCount >= 3 {
-                DriftIndicator(
-                    icon: "pause.circle",
-                    color: amberGlow.opacity(0.6),
-                    intensity: Float(mic.fillerCount) / 10.0
-                )
-                .transition(.opacity.combined(with: .scale))
+                Image(systemName: "pause.circle")
+                    .foregroundColor(amberColor.opacity(0.6))
+                    .scaleEffect(1.0 + min(CGFloat(mic.fillerCount) / 20.0, 0.5))  // Fixed: CGFloat conversion
             }
-
+            
+            // Pace indicator - proper CGFloat handling
             if let pace = mic.pace, pace.isBelowThreshold {
-                DriftIndicator(
-                    icon: "speedometer",
-                    color: dimAmber,
-                    intensity: abs(pace.percentChange)
-                )
-                .transition(.opacity.combined(with: .scale))
+                Image(systemName: "speedometer")
+                    .foregroundColor(dimAmber)
+                    .scaleEffect(1.0 + min(abs(CGFloat(pace.percentChange)) / 2.0, 0.3))  // Fixed: CGFloat conversion
             }
-
+            
+            // Pause indicator - simple scale
             if mic.didPause {
-                DriftIndicator(
-                    icon: "stop.circle",
-                    color: amberGlow.opacity(0.4),
-                    intensity: 0.5
-                )
-                .transition(.opacity.combined(with: .scale))
+                Image(systemName: "stop.circle")
+                    .foregroundColor(amberColor.opacity(0.4))
+                    .scaleEffect(1.2)  // Simple CGFloat value
             }
+            
+            Spacer()
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing)
         .padding(.top, 20)
@@ -198,17 +184,15 @@ struct AmbientDisplayView: View {
         .animation(.easeInOut(duration: 0.3), value: mic.fillerCount)
         .animation(.easeInOut(duration: 0.3), value: mic.didPause)
     }
-
-    // MARK: - Minimal Transcript
-
-    private func transcriptLayer(_: GeometryProxy) -> some View {
+    
+    private var transcriptDisplay: some View {
         VStack {
             Spacer()
-
+            
             if !mic.transcript.isEmpty {
-                Text(getRecentTranscript())
+                Text(getRecentText())
                     .font(.system(size: 11, weight: .regular, design: .monospaced))
-                    .foregroundColor(amberGlow.opacity(0.5))
+                    .foregroundColor(amberColor.opacity(0.5))
                     .lineLimit(2)
                     .multilineTextAlignment(.leading)
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -216,196 +200,118 @@ struct AmbientDisplayView: View {
                     .padding(.vertical, 10)
                     .background(
                         RoundedRectangle(cornerRadius: 8)
-                            .fill(charcoalBase.opacity(0.8))
-                            .background(
-                                RoundedRectangle(cornerRadius: 8)
-                                    .fill(.ultraThinMaterial)
-                            )
+                            .fill(backgroundColor.opacity(0.8))
                     )
                     .padding(.horizontal, 20)
                     .padding(.bottom, 20)
             }
         }
+        .animation(.easeInOut(duration: 0.25), value: mic.transcript.isEmpty)
     }
-
-    // MARK: - Update Methods
-
-    private func updateConceptParticles(_ concepts: [ConceptNode]) {
+    
+    // MARK: - ANIMATION SYSTEM
+    
+    private func startAnimation() {
+        // Timer callback wrapped in MainActor to fix concurrency
+        animationTimer = Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { _ in
+            Task { @MainActor in  // Fixed: Proper actor isolation
+                updateParticles()
+                cleanupOldElements()
+            }
+        }
+    }
+    
+    private func stopAnimation() {
+        animationTimer?.invalidate()
+        animationTimer = nil
+    }
+    
+    // MARK: - DATA HANDLING
+    
+    private func addParticles(_ concepts: [ConceptNode]) {
         for concept in concepts {
-            let particle = ConceptParticle(
-                id: UUID(),
+            let particle = SimpleParticle(
                 text: concept.text,
-                category: concept.category,
-                position: CGPoint(
-                    x: CGFloat.random(in: 100 ... 300),
-                    y: CGFloat.random(in: 100 ... 200)
-                ),
-                velocity: CGPoint(
-                    x: CGFloat.random(in: -0.5 ... 0.5),
-                    y: CGFloat.random(in: -0.3 ... 0.1)
-                ),
+                x: CGFloat.random(in: 50...350),  // Using CGFloat
+                y: CGFloat.random(in: 50...250),  // Using CGFloat
                 opacity: 0.8,
-                scale: 0.8,
-                createdAt: Date(),
-                lifespan: 15.0,
-                animationDuration: Double.random(in: 2.0 ... 8.0)
+                scale: CGFloat.random(in: 0.7...1.0),  // Using CGFloat
+                createdAt: Date()
             )
-
-            conceptParticles.append(particle)
-
-            // Add to animation engine
-            animationEngine.addThoughtParticle(at: particle.position, concept: concept.text)
+            particles.append(particle)
         }
-
-        // Keep only recent particles (max 20)
-        if conceptParticles.count > 20 {
-            conceptParticles = Array(conceptParticles.suffix(20))
+        
+        // Keep reasonable count
+        if particles.count > 20 {
+            particles = Array(particles.suffix(20))
         }
     }
-
-    private func updateConnectionLines(_ connections: [ThoughtConnection]) {
-        connectionLines.removeAll()
-
-        for connection in connections {
-            // Find particles for this connection
-            if let fromParticle = conceptParticles.first(where: { $0.text == connection.from }),
-               let toParticle = conceptParticles.first(where: { $0.text == connection.to })
-            {
-                let line = ConnectionLine(
-                    id: UUID(),
-                    from: fromParticle.position,
-                    to: toParticle.position,
-                    strength: connection.strength,
-                    opacity: Double(connection.strength * 0.8),
-                    createdAt: Date()
+    
+    private func updateConnections(_ thoughtConnections: [ThoughtConnection]) {
+        connections.removeAll()
+        
+        for connection in thoughtConnections {
+            if let fromParticle = particles.first(where: { $0.text == connection.from }),
+               let toParticle = particles.first(where: { $0.text == connection.to }) {
+                
+                let simpleConnection = SimpleConnection(
+                    startX: fromParticle.x,
+                    startY: fromParticle.y,
+                    endX: toParticle.x,
+                    endY: toParticle.y,
+                    opacity: CGFloat(connection.strength) * 0.7  // Convert Float to CGFloat
                 )
-
-                connectionLines.append(line)
-
-                // Add to animation engine
-                animationEngine.addConnection(from: fromParticle.position, to: toParticle.position)
+                connections.append(simpleConnection)
             }
         }
     }
-
-    private func updateParticleAnimation() {
-        for i in conceptParticles.indices {
-            // Gentle floating motion
-            conceptParticles[i].position.x += conceptParticles[i].velocity.x
-            conceptParticles[i].position.y += conceptParticles[i].velocity.y
-
-            // Wrap around screen edges
-            if conceptParticles[i].position.x < 0 {
-                conceptParticles[i].position.x = 800
-            } else if conceptParticles[i].position.x > 800 {
-                conceptParticles[i].position.x = 0
-            }
-
-            if conceptParticles[i].position.y < 0 {
-                conceptParticles[i].position.y = 600
-            } else if conceptParticles[i].position.y > 600 {
-                conceptParticles[i].position.y = 0
-            }
-
-            // Breathing scale effect
-            let timeSinceCreation = Date().timeIntervalSince(conceptParticles[i].createdAt)
-            let breathingScale = 0.8 + 0.2 * sin(timeSinceCreation * 0.5)
-            conceptParticles[i].scale = breathingScale
-
-            // Fade out near end of life
-            let ageRatio = timeSinceCreation / conceptParticles[i].lifespan
-            if ageRatio > 0.7 {
-                conceptParticles[i].opacity = max(0.1, 1.0 - (ageRatio - 0.7) / 0.3)
+    
+    // MARK: - ANIMATION UPDATES (MainActor isolated)
+    
+    @MainActor  // Fixed: Explicit MainActor to resolve isolation
+    private func updateParticles() {
+        let currentTime = Date()
+        
+        for i in particles.indices {
+            // Simple floating motion - using CGFloat
+            particles[i].x += CGFloat.random(in: -0.5...0.5)
+            particles[i].y += CGFloat.random(in: -0.3...0.3)
+            
+            // Boundary wrapping
+            if particles[i].x < 0 { particles[i].x = 400 }
+            if particles[i].x > 400 { particles[i].x = 0 }
+            if particles[i].y < 0 { particles[i].y = 300 }
+            if particles[i].y > 300 { particles[i].y = 0 }
+            
+            // Breathing effect
+            let age = currentTime.timeIntervalSince(particles[i].createdAt)
+            particles[i].scale = 0.7 + 0.3 * sin(age * 0.5)
+            
+            // Fade out
+            if age > 15.0 {
+                let fadeRatio = (age - 15.0) / 5.0
+                particles[i].opacity = max(0.1, 0.8 - fadeRatio)
             }
         }
     }
-
-    private func cleanupExpiredElements() {
-        let now = Date()
-
-        // Remove expired particles
-        conceptParticles.removeAll { particle in
-            now.timeIntervalSince(particle.createdAt) > particle.lifespan
-        }
-
-        // Remove old connections
-        connectionLines.removeAll { line in
-            now.timeIntervalSince(line.createdAt) > 10.0
+    
+    @MainActor  // Fixed: Explicit MainActor to resolve isolation
+    private func cleanupOldElements() {
+        let currentTime = Date()
+        
+        particles.removeAll { particle in
+            currentTime.timeIntervalSince(particle.createdAt) > 20.0
         }
     }
-
-    private func getRecentTranscript() -> String {
-        return mic.getRecentWords(count: 15).joined(separator: " ")
-    }
-
-    private func updateViews() {
-        // This function can be used to batch update any view-related state
-        // For example, you could update the position of particles or the opacity of connections here
+    
+    private func getRecentText() -> String {
+        return mic.getRecentWords(count: 12).joined(separator: " ")
     }
 }
 
-// MARK: - Supporting Views
-
-struct AnimatedParticlesView: View {
-    @ObservedObject var engine: AnimationEngine
-
-    var body: some View {
-        Canvas { context, _ in
-            // Draw particles
-            for particle in engine.animatedParticles {
-                let color = particleColor(for: particle.particleType)
-                let opacity = particle.alpha * engine.ambientPulse
-
-                context.opacity = opacity
-                context.fill(
-                    Circle().path(in: CGRect(
-                        x: CGFloat(particle.position.x) - CGFloat(particle.size) / 2,
-                        y: CGFloat(particle.position.y) - CGFloat(particle.size) / 2,
-                        width: CGFloat(particle.size),
-                        height: CGFloat(particle.size)
-                    )),
-                    with: .color(color)
-                )
-            }
-
-            // Draw connections
-            for connection in engine.animatedConnections {
-                let gradient = Gradient(colors: [
-                    AnimationEngine.amberGlow.opacity(Double(connection.strength)),
-                    AnimationEngine.amberGlow.opacity(Double(connection.strength * 0.3)),
-                ])
-
-                var path = Path()
-                path.move(to: CGPoint(x: CGFloat(connection.startPoint.x), y: CGFloat(connection.startPoint.y)))
-                path.addCurve(
-                    to: CGPoint(x: CGFloat(connection.endPoint.x), y: CGFloat(connection.endPoint.y)),
-                    control1: CGPoint(x: CGFloat(connection.controlPoint1.x), y: CGFloat(connection.controlPoint1.y)),
-                    control2: CGPoint(x: CGFloat(connection.controlPoint2.x), y: CGFloat(connection.controlPoint2.y))
-                )
-
-                context.stroke(
-                    path,
-                    with: .linearGradient(
-                        gradient,
-                        startPoint: CGPoint(x: CGFloat(connection.startPoint.x), y: CGFloat(connection.startPoint.y)),
-                        endPoint: CGPoint(x: CGFloat(connection.endPoint.x), y: CGFloat(connection.endPoint.y))
-                    ),
-                    lineWidth: 1 + CGFloat(connection.strength)
-                )
-            }
-        }
-    }
-
-    private func particleColor(for type: AnimatedParticle.ParticleType) -> Color {
-        switch type {
-        case .thought:
-            return AnimationEngine.amberGlow
-        case .connection:
-            return AnimationEngine.amberPrimary
-        case .drift:
-            return AnimationEngine.amberGlow.opacity(0.5)
-        case .crystallization:
-            return AnimationEngine.amberGlow
-        }
-    }
+// MARK: - PREVIEW
+#Preview {
+    AmbientDisplayView()
+        .environmentObject(MicPipeline())
+        .environmentObject(ASRBridge())
 }

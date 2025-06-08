@@ -1,31 +1,34 @@
-// MARK: - FillerDetector.swift
 //
-// Pure Swift fallback detector used when no hardware accelerated
-// implementation is available.  It simply counts common filler words
-// in a ring buffer of recent terms to provide a lightweight measure of
-// attention drift.
+//  FillerDetector.swift
+//  fHUD
+//
+//  CPU fallback detector (used if Metal unavailable).
+//
 
 import Foundation
 
 public class FillerDetector {
-    /// Canonical set of filler words used across detector implementations.
-    public static let fillers: Set<String> = ["um", "uh", "erm", "hmm", "like"]
 
-    // Allow subclass access to common properties
-    let fillers: Set<String> = Self.fillers
-    let window = RingBuffer<String>(capacity: 30) // last 30 words
+    /// Canonical filler list shared by *all* detectors.
+    public static let canonicalFillers: Set<String> =
+        ["um", "uh", "erm", "hmm", "like"]
+
+    // subclasses can read this
+    let fillers = FillerDetector.canonicalFillers
+    let window  = RingBuffer<String>(capacity: 30)   // last 30 words
 
     public init() {}
 
-    /// Feed *one* lowercase word at a time.
+    /// Feed **one lowercase word** at a time.  Returns current filler count.
+    @discardableResult
     public func record(word: String) -> Int {
         window.push(word)
         return window.toArray().filter { fillers.contains($0) }.count
     }
 
-    /// Simple threshold helper (≥ 3 fillers in the last 30 words = drift).
+    /// ≥ 3 fillers in the last 30 words **and** at least 15 words spoken.
     public func isDrifting() -> Bool {
-        let words = window.toArray()
+        let words       = window.toArray()
         let fillerCount = words.filter { fillers.contains($0) }.count
         return words.count >= 15 && fillerCount >= 3
     }

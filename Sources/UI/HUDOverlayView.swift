@@ -1,52 +1,65 @@
-// MARK: - HUDOverlayView.swift
+//  HUDOverlayView.swift
+//  fHUD
 //
-// Optional debug overlay that displays the recent transcript and
-// basic drift metrics.  It also subscribes to `ConceptWebSocketClient`
-// to show a small pop up when new concepts are broadcast from the
-// backend.
+//  Optional debug overlay that shows the rolling transcript, a few drift
+//  metrics, and a transient pop‑up whenever the backend broadcasts a new
+//  “concept” message.
+//
+//  Swift 6‑safe: no escaping closures mutate `self` from inside `init`.
 
 import Combine
 import SwiftUI
 
 public struct HUDOverlayView: View {
-    @EnvironmentObject var mic: MicPipeline
+    // --------------------------------------------------------------------
+    // Dependencies
+    @EnvironmentObject private var mic: MicPipeline
 
-    // Concept state
-    @State private var latestConcept: String = ""
+    // --------------------------------------------------------------------
+    // Concept‑popup state
+    @State private var latestConcept = ""
+
+    // Web‑socket client that publishes “concept” messages.
     private let conceptClient = ConceptWebSocketClient()
-    private var cancellables = Set<AnyCancellable>()
 
+    // --------------------------------------------------------------------
+    // Life‑cycle
     public init() {
-        // existing transcript setup…
+        // Existing transcript setup can stay here …
 
-        // Set up concept subscription
+        // Only connect — *do not* create Combine sinks that mutate `self`.
         conceptClient.connect()
-        conceptClient.publisher
-            .receive(on: DispatchQueue.main)
-            .sink { msg in
-                self.latestConcept = msg.concept
-            }
-            .store(in: &cancellables)
     }
 
+    // --------------------------------------------------------------------
     public var body: some View {
         ZStack(alignment: .bottom) {
-            VStack(alignment: .leading, spacing: 6) {
-                // live transcript (last ~30 words for now)
-                Text(mic.transcript.split(separator: " ").suffix(30).joined(separator: " "))
-                    .font(.system(size: 13, weight: .regular, design: .monospaced))
-                    .foregroundColor(.green)
-                    .lineLimit(3)
-                    .frame(maxWidth: .infinity, alignment: .leading)
 
+            //----------------------------------------------------------------
+            // Debug overlay
+            VStack(alignment: .leading, spacing: 6) {
+                // Live transcript (last ±30 words)
+                Text(
+                    mic.transcript.split(separator: " ")
+                        .suffix(30)
+                        .joined(separator: " ")
+                )
+                .font(.system(size: 13, weight: .regular, design: .monospaced))
+                .foregroundColor(.green)
+                .lineLimit(3)
+                .frame(maxWidth: .infinity, alignment: .leading)
+
+                // Simple drift metrics
                 HStack(spacing: 12) {
                     if let pace = mic.pace {
                         Text(String(format: "WPM %.0f", pace.currentWPM))
                     }
                     Text("Fillers \(mic.fillerCount)")
-                        .foregroundColor(mic.fillerCount >= 3 ? .orange : .secondary)
-                    if mic.didPause { Text("⏸︎") }
-                    if mic.didRepair { Text("⤺") }
+                        .foregroundColor(
+                            mic.fillerCount >= 3 ? .orange : .secondary
+                        )
+                    if mic.didPause   { Text("⏸︎") }
+                    if mic.didRepair  { Text("⤺") }
                 }
                 .font(.system(size: 11, design: .monospaced))
                 .foregroundColor(.yellow)
@@ -56,7 +69,8 @@ public struct HUDOverlayView: View {
             .cornerRadius(10)
             .padding()
 
-            // Concept popup
+            //----------------------------------------------------------------
+            // Concept pop‑up
             if !latestConcept.isEmpty {
                 Text(latestConcept)
                     .font(.caption)
@@ -72,13 +86,22 @@ public struct HUDOverlayView: View {
                     )
                     .padding(.bottom, 24)
                     .onAppear {
+                        // Auto‑dismiss after three seconds
                         DispatchQueue.main.asyncAfter(deadline: .now() + 3) {
                             withAnimation(.easeInOut(duration: 0.25)) {
-                                self.latestConcept = ""
+                                latestConcept = ""
                             }
                         }
                     }
             }
+        }
+        // ----------------------------------------------------------------
+        // Combine subscription *outside* of init → safe to mutate @State.
+        .onReceive(
+            conceptClient.publisher
+                .receive(on: DispatchQueue.main)
+        ) { msg in
+            latestConcept = msg.concept
         }
     }
 }

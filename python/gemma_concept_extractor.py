@@ -43,7 +43,7 @@ class ThoughtMoment:
     connections: List[str] = None  # Links to previous concepts
 
 class GemmaConceptExtractor:
-    def __init__(self, model_name="mlx-community/gemma-2-2b-it-4bit"):
+    def __init__(self, model_name="mlx-community/gemma-3-1b-it-qat-4bit"):
         """Initialize Gemma-3 model for concept extraction"""
         print(f"🧠 Loading Gemma model: {model_name}")
         

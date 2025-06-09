@@ -59,7 +59,6 @@ final class ASRBridge: ObservableObject {
 
     private var ringBuffer: SharedRingBuffer?
     private var ringCancellable: AnyCancellable?
-    private var sharedMemoryPoller: Timer?
     private var lastReadPosition: UInt32 = 0
     private var lastSequence: UInt32 = 0
     private var sentinelTimestamp: Date?
@@ -107,7 +106,7 @@ final class ASRBridge: ObservableObject {
         guard ringBuffer == nil else { return }
         if let reader = SharedRingBuffer(name: path) {
             ringBuffer = reader
-            sharedMemoryPoller = Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { [weak self] _ in
+            reader.startMonitoring { [weak self] in
                 Task { @MainActor in
                     self?.checkSharedMemory()
                 }

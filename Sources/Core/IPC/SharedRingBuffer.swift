@@ -67,7 +67,7 @@ public final class SharedRingBuffer {
         }
         if fd == -1 {
             // Attempt to unlink stale segment and retry once
-            self.shmName.withCString { namePtr in
+            _ = self.shmName.withCString { namePtr in
                 c_shm_unlink(namePtr)
             }
             fd = self.shmName.withCString { namePtr in
@@ -239,7 +239,7 @@ public final class SharedRingBuffer {
         if lockFd != -1 {
             close(lockFd)
         }
-        shmName.withCString { namePtr in
+        _ = shmName.withCString { namePtr in
             c_shm_unlink(namePtr)
         }
     }

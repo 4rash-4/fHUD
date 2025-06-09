@@ -359,8 +359,8 @@ final class ASRBridge: ObservableObject {
 
     private func requestRetransmission(from sequence: UInt32) {
         guard let webSocket else { return }
-        let msg = ["type": "retransmit", "from": sequence]
-        if let data = try? JSONSerialization.data(withJSONObject: msg, options: []) {
+        let msg = RetransmitMessage(from: sequence)
+        if let data = try? JSONEncoder().encode(msg) {
             Task { try? await webSocket.send(.data(data)) }
         }
     }
@@ -505,6 +505,11 @@ struct TranscriptionEvent: Codable {
     let w: String // word
     let t: TimeInterval // timestamp
     let c: Float? // optional confidence score
+}
+
+struct RetransmitMessage: Codable {
+    let type: String = "retransmit"
+    let from: UInt32
 }
 
 struct ConceptEvent: Codable {

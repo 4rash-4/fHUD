@@ -7,6 +7,7 @@ client and writes transcripts to a shared-memory ring buffer.
 import asyncio
 import json
 import struct
+import zlib
 import sqlite3
 import time
 from datetime import datetime
@@ -73,6 +74,12 @@ def safe_database_operation(conn: sqlite3.Connection):
 SHM_NAME = "tc_rb"
 SHM_SIZE = 64 * 1024
 VERSION_BYTE = 1
+HEADER_SIZE = 16  # head(4) tail(4) overflow(4) version(1) padding(3)
+OVERFLOW_OFFSET = 8
+VERSION_OFFSET = 12
+DATA_OFFSET = HEADER_SIZE
+CAPACITY = SHM_SIZE - HEADER_SIZE
+sequence_counter = 0
 shm_lock = Lock()  # This lock needs to be shared across processes
 
 try:
@@ -81,8 +88,6 @@ except FileNotFoundError:
     shm = shared_memory.SharedMemory(name=SHM_NAME, create=True, size=SHM_SIZE)
 
 buf = shm.buf
-CAPACITY = SHM_SIZE - 9
-DATA_OFFSET = 9
 
 # Create a named lock that can be shared across processes
 lock_file_path = os.path.join(tempfile.gettempdir(), f"{SHM_NAME}.lock")
@@ -268,19 +273,15 @@ def write_to_shared_memory(transcript: str):
 
 
 def _write_word(word: str, timestamp: float, confidence: float) -> None:
-    """Pack a single word into the ring buffer.
-
-    Binary layout per entry:
-        length      uint16
-        timestamp   float64
-        confidence  float32
-        word_len    uint16
-        word bytes  variable
-        padding     to 8 byte boundary
-    """
+    """Pack a single word into the ring buffer with sequence number and CRC32."""
+    global sequence_counter
     data = word.encode("utf-8")
     word_len = len(data)
-    entry_len = 2 + 8 + 4 + 2 + word_len
+    payload = struct.pack(
+        "<I d f H", sequence_counter, timestamp, confidence, word_len
+    ) + data
+    crc = zlib.crc32(payload)
+    entry_len = 2 + len(payload) + 4
     padded = (entry_len + 7) & ~7
 
     acquire_shared_lock()
@@ -292,12 +293,21 @@ def _write_word(word: str, timestamp: float, confidence: float) -> None:
             if padded > space_left:
                 tail = (tail + (padded - space_left)) % CAPACITY
                 struct.pack_into("I", m, 4, tail)
+                overflow = struct.unpack_from("I", m, OVERFLOW_OFFSET)[0] + 1
+                struct.pack_into("I", m, OVERFLOW_OFFSET, overflow)
 
             write_pos = head
-            if m[8] != VERSION_BYTE:
-                m[8] = VERSION_BYTE
+            if m[VERSION_OFFSET] != VERSION_BYTE:
+                m[VERSION_OFFSET] = VERSION_BYTE
 
-            entry = struct.pack("<HdfH", entry_len, timestamp, confidence, word_len) + data
+            # Write sentinel length 0 to detect torn writes
+            struct.pack_into("<H", m, DATA_OFFSET + write_pos, 0)
+
+            entry = (
+                struct.pack("<H", entry_len)
+                + payload
+                + struct.pack("<I", crc)
+            )
             entry += b"\x00" * (padded - len(entry))
 
             end_pos = write_pos + padded
@@ -308,8 +318,11 @@ def _write_word(word: str, timestamp: float, confidence: float) -> None:
                 m[DATA_OFFSET + write_pos : DATA_OFFSET + write_pos + first] = entry[:first]
                 m[DATA_OFFSET : DATA_OFFSET + padded - first] = entry[first:]
 
+            # Patch actual length to replace sentinel
+            struct.pack_into("<H", m, DATA_OFFSET + write_pos, entry_len)
             new_head = (head + padded) % CAPACITY
             struct.pack_into("I", m, 0, new_head)
+            sequence_counter += 1
     finally:
         release_shared_lock()
 

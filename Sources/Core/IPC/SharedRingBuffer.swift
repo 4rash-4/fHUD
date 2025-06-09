@@ -56,7 +56,11 @@ public final class SharedRingBuffer {
     private var ptr: UnsafeMutableRawPointer!
     private var lockFd: Int32 = -1
     private var timer: DispatchSourceTimer?
+    private var source: DispatchSourceFileSystemObject?
     public let publisher = PassthroughSubject<String, Never>()
+
+    /// File descriptor used for dispatch source monitoring
+    public var fileDescriptor: Int32 { fd }
 
     public init?(name: String = "/tc_rb") {
         self.shmName = name.hasPrefix("/") ? name : "/" + name
@@ -156,6 +160,24 @@ public final class SharedRingBuffer {
         timer?.resume()
     }
 
+    /// Start DispatchSource monitoring for writes.
+    /// Falls back to timer polling if creation fails.
+    public func startMonitoring(handler: @escaping () -> Void) {
+        guard source == nil else { return }
+        let queue = DispatchQueue.global(qos: .userInteractive)
+        let s = DispatchSource.makeFileSystemObjectSource(
+            fileDescriptor: fd,
+            eventMask: .write,
+            queue: queue
+        )
+        s.setEventHandler(handler)
+        s.setCancelHandler { [weak self] in
+            self?.source = nil
+        }
+        source = s
+        s.resume()
+    }
+
     private func readUInt32(at offset: Int) -> UInt32 {
         OSMemoryBarrier()
         return ptr.load(fromByteOffset: offset, as: UInt32.self)
@@ -234,6 +256,7 @@ public final class SharedRingBuffer {
 
     deinit {
         timer?.cancel()
+        source?.cancel()
         munmap(ptr, shmSize)
         close(fd)
         if lockFd != -1 {

@@ -28,9 +28,7 @@ public struct HUDOverlayView: View {
         // Existing transcript setup can stay here …
 
         // Only connect — *do not* create Combine sinks that mutate `self`.
-        Task {
-            await conceptClient.connect()
-        }
+        conceptClient.connect()
     }
 
     // --------------------------------------------------------------------
@@ -98,10 +96,7 @@ public struct HUDOverlayView: View {
         }
         // ----------------------------------------------------------------
         // Combine subscription *outside* of init → safe to mutate @State.
-        .onReceive(
-            conceptClient.publisher
-                .receive(on: DispatchQueue.main)
-        ) { msg in
+        .onReceive(conceptClient.publisher) { msg in
             latestConcept = msg.concept
         }
     }

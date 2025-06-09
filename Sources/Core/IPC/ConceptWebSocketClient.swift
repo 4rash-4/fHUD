@@ -22,17 +22,17 @@ public struct ConceptMessage: Codable {
 }
 
 /// WebSocket client for concept messages
-public actor ConceptWebSocketClient {
+@MainActor
+public final class ConceptWebSocketClient: Sendable {
     private let url = URL(string: "ws://127.0.0.1:8765/concepts")!
     private var task: URLSessionWebSocketTask?
     private let decoder = JSONDecoder()
     public let publisher = PassthroughSubject<ConceptMessage, Never>()
-    private let decodeQueue = DispatchQueue(label: "ConceptDecode", qos: .utility)
     private var reconnectDelay = 1.0
 
     public init() {}
 
-    public func connect() async {
+    public func connect() {
         let session = URLSession(configuration: .ephemeral)
         task = session.webSocketTask(with: url)
         task?.resume()
@@ -41,20 +41,18 @@ public actor ConceptWebSocketClient {
 
     private func receive() {
         task?.receive { [weak self] result in
-            guard let strongSelf = self else { return }
+            Task { @MainActor [weak self] in
+                guard let self else { return }
 
-            strongSelf.decodeQueue.async {
                 switch result {
                 case .failure:
-                    Task { @MainActor in
-                        strongSelf.scheduleReconnect()
-                    }
+                    self.scheduleReconnect()
 
                 case let .success(.string(text)):
-                    Task { strongSelf.decodeAndPublish(text) }
+                    self.decodeAndPublish(text)
 
                 default:
-                    Task { strongSelf.receive() }
+                    self.receive()
                 }
             }
         }
@@ -68,14 +66,7 @@ public actor ConceptWebSocketClient {
             )
             guard wrapper.type == "concept" else { return }
 
-            // Grab the payload on the decode queue
-            let payload = wrapper.payload // value type
-            let subject = publisher // capture the subject, not self
-
-            // Publish on the MainActor to avoid data races
-            Task { @MainActor in
-                subject.send(payload)
-            }
+            publisher.send(wrapper.payload)
 
         } catch {
             print("Concept decode error:", error)
@@ -83,16 +74,14 @@ public actor ConceptWebSocketClient {
     }
 
     private func scheduleReconnect() {
-        DispatchQueue.global().asyncAfter(deadline: .now() + reconnectDelay) { [weak self] in
-            guard let self = self else { return }
-            Task { @MainActor in
-                self.reconnectDelay = min(self.reconnectDelay * 2, 30)
-                await self.connect()
-            }
+        Task { @MainActor in
+            try? await Task.sleep(nanoseconds: UInt64(reconnectDelay * 1_000_000_000))
+            reconnectDelay = min(reconnectDelay * 2, 30)
+            connect()
         }
     }
 
-    public func disconnect() async {
+    public func disconnect() {
         task?.cancel(with: .goingAway, reason: nil)
     }
 }

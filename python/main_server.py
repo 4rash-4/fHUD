@@ -8,6 +8,7 @@ import asyncio
 import json
 import struct
 import sqlite3
+import time
 from datetime import datetime
 from multiprocessing import shared_memory
 import os
@@ -71,6 +72,7 @@ def safe_database_operation(conn: sqlite3.Connection):
 # --- Shared Memory Setup ---
 SHM_NAME = "tc_rb"
 SHM_SIZE = 64 * 1024
+VERSION_BYTE = 1
 shm_lock = Lock()  # This lock needs to be shared across processes
 
 try:
@@ -79,7 +81,8 @@ except FileNotFoundError:
     shm = shared_memory.SharedMemory(name=SHM_NAME, create=True, size=SHM_SIZE)
 
 buf = shm.buf
-CAPACITY = SHM_SIZE - 8
+CAPACITY = SHM_SIZE - 9
+DATA_OFFSET = 9
 
 # Create a named lock that can be shared across processes
 lock_file_path = os.path.join(tempfile.gettempdir(), f"{SHM_NAME}.lock")
@@ -257,41 +260,58 @@ async def process_transcript(transcript: str):
         raise
 
 def write_to_shared_memory(transcript: str):
-    """Write transcript to shared memory with optimized zero-copy and wrap-around handling"""
-    try:
-        data = transcript.encode("utf-8")
-        length = len(data)
-        if length > CAPACITY:
-            data = data[:CAPACITY]  # Use slicing instead of re-encoding
-            length = CAPACITY
-            logger.warning(f"Transcript truncated from {len(transcript.encode('utf-8'))} to {length} bytes")
+    """Write words to shared memory using the binary format described in AGENTS.md."""
+    words = [w for w in transcript.split() if w.strip()]
+    now = time.time()
+    for w in words:
+        _write_word(w, now, 1.0)
 
-        acquire_shared_lock()
-        try:
-            with memoryview(buf) as m:
-                head = struct.unpack_from("I", m, 0)[0]
-                tail = struct.unpack_from("I", m, 4)[0]
-                # Calculate available space in the ring buffer
-                space_left = CAPACITY - ((head - tail) % CAPACITY)
-                if length > space_left:
-                    # Not enough space, move tail forward to make room
-                    tail = (tail + (length - space_left)) % CAPACITY
-                    struct.pack_into("I", m, 4, tail)
-                write_pos = head
-                end_pos = write_pos + length
-                if end_pos <= CAPACITY:
-                    m[8 + write_pos : 8 + end_pos] = data
-                else:
-                    first = CAPACITY - write_pos
-                    m[8 + write_pos : 8 + write_pos + first] = data[:first]
-                    m[8 : 8 + (length - first)] = data[first:]
-                new_head = (head + length) % CAPACITY
-                struct.pack_into("I", m, 0, new_head)
-        finally:
-            release_shared_lock()
-    except Exception as e:
-        logger.error(f"Failed to write to shared memory: {e}")
-        raise
+
+def _write_word(word: str, timestamp: float, confidence: float) -> None:
+    """Pack a single word into the ring buffer.
+
+    Binary layout per entry:
+        length      uint16
+        timestamp   float64
+        confidence  float32
+        word_len    uint16
+        word bytes  variable
+        padding     to 8 byte boundary
+    """
+    data = word.encode("utf-8")
+    word_len = len(data)
+    entry_len = 2 + 8 + 4 + 2 + word_len
+    padded = (entry_len + 7) & ~7
+
+    acquire_shared_lock()
+    try:
+        with memoryview(buf) as m:
+            head = struct.unpack_from("I", m, 0)[0]
+            tail = struct.unpack_from("I", m, 4)[0]
+            space_left = CAPACITY - ((head - tail) % CAPACITY)
+            if padded > space_left:
+                tail = (tail + (padded - space_left)) % CAPACITY
+                struct.pack_into("I", m, 4, tail)
+
+            write_pos = head
+            if m[8] != VERSION_BYTE:
+                m[8] = VERSION_BYTE
+
+            entry = struct.pack("<HdfH", entry_len, timestamp, confidence, word_len) + data
+            entry += b"\x00" * (padded - len(entry))
+
+            end_pos = write_pos + padded
+            if end_pos <= CAPACITY:
+                m[DATA_OFFSET + write_pos : DATA_OFFSET + write_pos + padded] = entry
+            else:
+                first = CAPACITY - write_pos
+                m[DATA_OFFSET + write_pos : DATA_OFFSET + write_pos + first] = entry[:first]
+                m[DATA_OFFSET : DATA_OFFSET + padded - first] = entry[first:]
+
+            new_head = (head + padded) % CAPACITY
+            struct.pack_into("I", m, 0, new_head)
+    finally:
+        release_shared_lock()
 
 # --- Daily Markdown Export ---
 def export_to_markdown():

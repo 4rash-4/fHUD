@@ -6,9 +6,9 @@
 import Combine
 import Foundation
 
-extension Timer: @unchecked Sendable {}
-extension AnyCancellable: @unchecked Sendable {}
-extension PassthroughSubject: @unchecked Sendable {} // ← NEW
+extension Timer: @retroactive @unchecked Sendable {}
+extension AnyCancellable: @retroactive @unchecked Sendable {}
+extension PassthroughSubject: @retroactive @unchecked Sendable {} // ← NEW
 
 // MARK: - ASRBridge.swift
 
@@ -106,14 +106,16 @@ final class ASRBridge: ObservableObject {
         if let reader = SharedRingBuffer(name: path) {
             ringBuffer = reader
             sharedMemoryPoller = Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { [weak self] _ in
-                self?.checkSharedMemory()
+                Task { @MainActor in
+                    self?.checkSharedMemory()
+                }
             }
         }
     }
 
     private func checkSharedMemory() {
         guard let buffer = ringBuffer else { return }
-        var mutableBuffer = buffer
+        let mutableBuffer = buffer
         while let entry = mutableBuffer.readNextWord(lastTail: &lastReadPosition) {
             mic?.ingest(word: entry.0, at: entry.1)
             shmWordCount += 1

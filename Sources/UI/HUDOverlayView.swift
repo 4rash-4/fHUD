@@ -28,7 +28,9 @@ public struct HUDOverlayView: View {
         // Existing transcript setup can stay here …
 
         // Only connect — *do not* create Combine sinks that mutate `self`.
-        conceptClient.connect()
+        Task {
+            await conceptClient.connect()
+        }
     }
 
     // --------------------------------------------------------------------

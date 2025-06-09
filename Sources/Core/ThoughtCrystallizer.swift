@@ -6,12 +6,12 @@ final class ThoughtCrystallizer {
     private var crystallizationThreshold: Float = 0.7
 
     init(graph: ConceptGraph) {
-        self.conceptGraph = graph
+        conceptGraph = graph
     }
 
     func processNewConcept(_ concept: ConceptNode) {
         let related = conceptGraph.findRelated(concept, threshold: 0.5)
-        if related.count >= 3 && calculateCoherence(related) > crystallizationThreshold {
+        if related.count >= 3, calculateCoherence(related) > crystallizationThreshold {
             crystallizeMoment(concept, related)
         }
     }
@@ -21,7 +21,7 @@ final class ThoughtCrystallizer {
         return Float(nodes.count) / 5.0
     }
 
-    private func crystallizeMoment(_ primary: ConceptNode, _ related: [ConceptNode]) {
+    private func crystallizeMoment(_ primary: ConceptNode, _: [ConceptNode]) {
         // TODO: handle visualization and storage
         print("✨ Crystallized thought around \(primary.text)")
     }

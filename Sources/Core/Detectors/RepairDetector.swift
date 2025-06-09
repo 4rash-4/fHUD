@@ -1,4 +1,5 @@
 // MARK: - RepairDetector.swift
+
 //
 // Detects immediate word repetitions which often indicate hesitation or
 // cognitive overload.  The detector is intentionally simple – only two

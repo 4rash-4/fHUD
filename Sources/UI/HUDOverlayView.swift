@@ -34,8 +34,7 @@ public struct HUDOverlayView: View {
     // --------------------------------------------------------------------
     public var body: some View {
         ZStack(alignment: .bottom) {
-
-            //----------------------------------------------------------------
+            // ----------------------------------------------------------------
             // Debug overlay
             VStack(alignment: .leading, spacing: 6) {
                 // Live transcript (last ±30 words)
@@ -58,8 +57,8 @@ public struct HUDOverlayView: View {
                         .foregroundColor(
                             mic.fillerCount >= 3 ? .orange : .secondary
                         )
-                    if mic.didPause   { Text("⏸︎") }
-                    if mic.didRepair  { Text("⤺") }
+                    if mic.didPause { Text("⏸︎") }
+                    if mic.didRepair { Text("⤺") }
                 }
                 .font(.system(size: 11, design: .monospaced))
                 .foregroundColor(.yellow)
@@ -69,7 +68,7 @@ public struct HUDOverlayView: View {
             .cornerRadius(10)
             .padding()
 
-            //----------------------------------------------------------------
+            // ----------------------------------------------------------------
             // Concept pop‑up
             if !latestConcept.isEmpty {
                 Text(latestConcept)

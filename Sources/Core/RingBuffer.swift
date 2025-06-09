@@ -1,4 +1,5 @@
 // MARK: - RingBuffer.swift
+
 //
 // Simple thread‑safe FIFO ring buffer used throughout the project for
 // sliding window calculations.  It is `Sendable` so it can be shared

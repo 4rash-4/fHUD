@@ -1,4 +1,5 @@
 // MARK: - PaceAnalyzer.swift
+
 //
 // Tracks speaking rate over a sliding window.  This lightweight analyzer
 // forms part of the drift detection layer by monitoring words per minute

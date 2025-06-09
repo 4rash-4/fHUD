@@ -1,317 +1,331 @@
 //
-// AmbientDisplayView.swift - TRULY MINIMAL VERSION
+// AmbientDisplayView.swift - Minimal Working Version
 //
-// FIXES APPLIED:
-// 1. All Float -> CGFloat conversions
-// 2. Proper @MainActor isolation for Timer callbacks
-// 3. Removed all assumptions about your data models
-// 4. Only uses guaranteed-to-work SwiftUI patterns
+// A clean, functional implementation that:
+// - Shows floating concept particles with text labels
+// - Draws simple connections between related concepts
+// - Displays drift indicators (filler, pause, pace)
+// - Shows scrolling transcript at bottom
+// - Fits perfectly on 13" MacBook (1280x800)
 //
 
-import Combine
 import SwiftUI
+import Combine
 
-// MARK: - MINIMAL DATA MODELS
-// Using only basic types that we know exist
-
-struct SimpleParticle: Identifiable, Hashable {
-    let id = UUID()
-    let text: String
-    var x: CGFloat  // Changed from Double to CGFloat
-    var y: CGFloat  // Changed from Double to CGFloat
-    var opacity: CGFloat  // Changed from Double to CGFloat
-    var scale: CGFloat  // Changed from Double to CGFloat
-    let createdAt: Date
-    
-    func hash(into hasher: inout Hasher) {
-        hasher.combine(id)
-    }
-    
-    static func == (lhs: SimpleParticle, rhs: SimpleParticle) -> Bool {
-        lhs.id == rhs.id
-    }
-}
-
-struct SimpleConnection: Identifiable, Hashable {
-    let id = UUID()
-    let startX: CGFloat  // Changed from Double to CGFloat
-    let startY: CGFloat  // Changed from Double to CGFloat
-    let endX: CGFloat   // Changed from Double to CGFloat
-    let endY: CGFloat   // Changed from Double to CGFloat
-    let opacity: CGFloat // Changed from Double to CGFloat
-    
-    func hash(into hasher: inout Hasher) {
-        hasher.combine(id)
-    }
-    
-    static func == (lhs: SimpleConnection, rhs: SimpleConnection) -> Bool {
-        lhs.id == rhs.id
-    }
-}
-
-// MARK: - MAIN VIEW
+// MARK: - Main View
 struct AmbientDisplayView: View {
-    // MARK: - ENVIRONMENT
+    // MARK: - Environment
     @EnvironmentObject var mic: MicPipeline
     @EnvironmentObject var asrBridge: ASRBridge
+    @StateObject private var animationEngine = AnimationEngine()
     
-    // MARK: - STATE
-    @State private var particles: [SimpleParticle] = []
-    @State private var connections: [SimpleConnection] = []
-    @State private var animationTimer: Timer?
+    // MARK: - State
+    @State private var conceptPositions: [String: CGPoint] = [:]
+    @State private var particleLifetimes: [String: Date] = [:]
     
-    // MARK: - COLORS
-    private let amberColor = Color(red: 0.96, green: 0.65, blue: 0.14)
-    private let backgroundColor = Color(red: 0.12, green: 0.12, blue: 0.12)
+    // MARK: - Constants
+    private let amber = Color(red: 0.96, green: 0.65, blue: 0.14)
+    private let charcoal = Color(red: 0.12, green: 0.12, blue: 0.12)
     private let dimAmber = Color(red: 0.96, green: 0.65, blue: 0.14, opacity: 0.3)
     
-    // MARK: - BODY
+    // Layout constants for 1280x800 display
+    private let margin: CGFloat = 30
+    private let transcriptHeight: CGFloat = 60
+    private let particleSize: CGFloat = 50
+    
+    // MARK: - Body
     var body: some View {
         GeometryReader { geometry in
             ZStack {
-                // Background
-                backgroundColor
-                    .ignoresSafeArea()
+                // Layer 1: Background
+                charcoal.ignoresSafeArea()
                 
-                // Particles
-                particleCanvas
+                // Layer 2: Animated particles from engine
+                // Using Canvas directly since AnimatedParticlesView might not be accessible
+                Canvas { context, size in
+                    // Draw ambient particles
+                    for particle in animationEngine.animatedParticles {
+                        let opacity = Double(particle.alpha) * Double(animationEngine.ambientPulse)
+                        
+                        context.opacity = opacity
+                        context.fill(
+                            Circle().path(in: CGRect(
+                                x: CGFloat(particle.position.x) - CGFloat(particle.size) / 2,
+                                y: CGFloat(particle.position.y) - CGFloat(particle.size) / 2,
+                                width: CGFloat(particle.size),
+                                height: CGFloat(particle.size)
+                            )),
+                            with: .color(amber.opacity(0.3))
+                        )
+                    }
+                }
+                .frame(width: geometry.size.width, height: geometry.size.height)
                 
-                // Connections
-                connectionCanvas
+                // Layer 3: Concept connections
+                conceptConnectionsLayer
                 
-                // Drift indicators
-                driftIndicators
+                // Layer 4: Concept particles
+                conceptParticlesLayer
                 
-                // Transcript
-                transcriptDisplay
+                // Layer 5: Drift indicators (top-right)
+                driftIndicatorsLayer
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing)
+                    .padding(.top, 150)
+                    .padding(.trailing, margin)
+                
+                // Layer 6: Transcript bar (bottom)
+                transcriptBarLayer
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
             }
         }
         .onAppear {
-            startAnimation()
-        }
-        .onDisappear {
-            stopAnimation()
+            setupView()
         }
         .onReceive(asrBridge.$recentConcepts) { concepts in
-            addParticles(concepts)
+            handleNewConcepts(concepts)
         }
-        .onReceive(asrBridge.$thoughtConnections) { thoughtConnections in
-            updateConnections(thoughtConnections)
+        .onReceive(Timer.publish(every: 0.1, on: .main, in: .common).autoconnect()) { _ in
+            updateParticlePositions()
+            cleanupOldParticles()
         }
     }
     
-    // MARK: - CANVAS RENDERING
+    // MARK: - Layer Components
     
-    private var particleCanvas: some View {
+    /// Simple concept particles with text labels
+    private var conceptParticlesLayer: some View {
+        ForEach(Array(conceptPositions.keys), id: \.self) { concept in
+            if let position = conceptPositions[concept] {
+                Text(concept)
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundColor(charcoal)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 4)
+                    .background(
+                        RoundedRectangle(cornerRadius: 12)
+                            .fill(amber.opacity(particleOpacity(for: concept)))
+                    )
+                    .position(position)
+                    .animation(.easeInOut(duration: 0.3), value: position)
+            }
+        }
+    }
+    
+    /// Simple lines between related concepts
+    private var conceptConnectionsLayer: some View {
         Canvas { context, size in
-            for particle in particles {
-                let center = CGPoint(x: particle.x, y: particle.y)
-                let radius = 4.0 * particle.scale
-                let rect = CGRect(
-                    x: center.x - radius,
-                    y: center.y - radius,
-                    width: radius * 2,
-                    height: radius * 2
-                )
-                
-                context.opacity = particle.opacity
-                context.fill(
-                    Circle().path(in: rect),
-                    with: .color(amberColor)
-                )
-                
-                // Text label for larger particles
-                if particle.scale > 0.8 {
-                    let textPoint = CGPoint(x: center.x, y: center.y + radius + 10)
-                    context.draw(
-                        Text(particle.text)
-                            .font(.caption2)
-                            .foregroundColor(amberColor.opacity(0.8)),
-                        at: textPoint
+            // Draw connections from ASRBridge
+            for connection in asrBridge.thoughtConnections {
+                if let fromPos = conceptPositions[connection.from],
+                   let toPos = conceptPositions[connection.to] {
+                    
+                    var path = Path()
+                    path.move(to: fromPos)
+                    path.addLine(to: toPos)
+                    
+                    context.stroke(
+                        path,
+                        with: .color(amber.opacity(Double(connection.strength) * 0.5)),
+                        lineWidth: 1.5
                     )
                 }
             }
         }
     }
     
-    private var connectionCanvas: some View {
-        Canvas { context, size in
-            for connection in connections {
-                var path = Path()
-                path.move(to: CGPoint(x: connection.startX, y: connection.startY))
-                path.addLine(to: CGPoint(x: connection.endX, y: connection.endY))
-                
-                context.opacity = connection.opacity
-                context.stroke(
-                    path,
-                    with: .color(amberColor.opacity(0.6)),
-                    lineWidth: 1.5
-                )
-            }
-        }
-    }
-    
-    // MARK: - UI COMPONENTS
-    
-    private var driftIndicators: some View {
-        VStack(alignment: .trailing, spacing: 8) {
-            // Filler count indicator - using CGFloat for scaleEffect
+    /// Drift indicators with simple visual cues
+    private var driftIndicatorsLayer: some View {
+        VStack(alignment: .trailing, spacing: 12) {
+            // Filler indicator
             if mic.fillerCount >= 3 {
-                Image(systemName: "pause.circle")
-                    .foregroundColor(amberColor.opacity(0.6))
-                    .scaleEffect(1.0 + min(CGFloat(mic.fillerCount) / 20.0, 0.5))  // Fixed: CGFloat conversion
+                HStack {
+                    Text("Drift detected")
+                        .font(.caption)
+                        .foregroundColor(amber.opacity(0.8))
+                    
+                    Image(systemName: "pause.circle.fill")
+                        .foregroundColor(amber)
+                        .scaleEffect(1.0 + CGFloat(mic.fillerCount - 3) * 0.1)
+                }
+                .padding(.horizontal, 12)
+                .padding(.vertical, 6)
+                .background(
+                    RoundedRectangle(cornerRadius: 8)
+                        .fill(charcoal.opacity(0.9))
+                )
+                .transition(.move(edge: .trailing).combined(with: .opacity))
             }
             
-            // Pace indicator - proper CGFloat handling
+            // Pace indicator
             if let pace = mic.pace, pace.isBelowThreshold {
-                Image(systemName: "speedometer")
-                    .foregroundColor(dimAmber)
-                    .scaleEffect(1.0 + min(abs(CGFloat(pace.percentChange)) / 2.0, 0.3))  // Fixed: CGFloat conversion
+                HStack {
+                    Text("Pace slow")
+                        .font(.caption)
+                        .foregroundColor(dimAmber)
+                    
+                    Image(systemName: "speedometer")
+                        .foregroundColor(dimAmber)
+                }
+                .padding(.horizontal, 12)
+                .padding(.vertical, 6)
+                .background(
+                    RoundedRectangle(cornerRadius: 8)
+                        .fill(charcoal.opacity(0.9))
+                )
+                .transition(.move(edge: .trailing).combined(with: .opacity))
             }
             
-            // Pause indicator - simple scale
+            // Pause indicator
             if mic.didPause {
-                Image(systemName: "stop.circle")
-                    .foregroundColor(amberColor.opacity(0.4))
-                    .scaleEffect(1.2)  // Simple CGFloat value
+                HStack {
+                    Text("Breathe")
+                        .font(.caption)
+                        .foregroundColor(amber.opacity(0.6))
+                    
+                    Image(systemName: "wind")
+                        .foregroundColor(amber.opacity(0.6))
+                }
+                .padding(.horizontal, 12)
+                .padding(.vertical, 6)
+                .background(
+                    RoundedRectangle(cornerRadius: 8)
+                        .fill(charcoal.opacity(0.9))
+                )
+                .transition(.move(edge: .trailing).combined(with: .opacity))
             }
-            
-            Spacer()
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing)
-        .padding(.top, 20)
-        .padding(.trailing, 20)
         .animation(.easeInOut(duration: 0.3), value: mic.fillerCount)
         .animation(.easeInOut(duration: 0.3), value: mic.didPause)
     }
     
-    private var transcriptDisplay: some View {
-        VStack {
-            Spacer()
-            
+    /// Scrolling transcript bar at bottom
+    private var transcriptBarLayer: some View {
+        VStack(spacing: 0) {
             if !mic.transcript.isEmpty {
-                Text(getRecentText())
-                    .font(.system(size: 11, weight: .regular, design: .monospaced))
-                    .foregroundColor(amberColor.opacity(0.5))
-                    .lineLimit(2)
-                    .multilineTextAlignment(.leading)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(.horizontal, 20)
-                    .padding(.vertical, 10)
-                    .background(
-                        RoundedRectangle(cornerRadius: 8)
-                            .fill(backgroundColor.opacity(0.8))
-                    )
-                    .padding(.horizontal, 20)
-                    .padding(.bottom, 20)
-            }
-        }
-        .animation(.easeInOut(duration: 0.25), value: mic.transcript.isEmpty)
-    }
-    
-    // MARK: - ANIMATION SYSTEM
-    
-    private func startAnimation() {
-        // Timer callback wrapped in MainActor to fix concurrency
-        animationTimer = Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { _ in
-            Task { @MainActor in  // Fixed: Proper actor isolation
-                updateParticles()
-                cleanupOldElements()
-            }
-        }
-    }
-    
-    private func stopAnimation() {
-        animationTimer?.invalidate()
-        animationTimer = nil
-    }
-    
-    // MARK: - DATA HANDLING
-    
-    private func addParticles(_ concepts: [ConceptNode]) {
-        for concept in concepts {
-            let particle = SimpleParticle(
-                text: concept.text,
-                x: CGFloat.random(in: 50...350),  // Using CGFloat
-                y: CGFloat.random(in: 50...250),  // Using CGFloat
-                opacity: 0.8,
-                scale: CGFloat.random(in: 0.7...1.0),  // Using CGFloat
-                createdAt: Date()
-            )
-            particles.append(particle)
-        }
-        
-        // Keep reasonable count
-        if particles.count > 20 {
-            particles = Array(particles.suffix(20))
-        }
-    }
-    
-    private func updateConnections(_ thoughtConnections: [ThoughtConnection]) {
-        connections.removeAll()
-        
-        for connection in thoughtConnections {
-            if let fromParticle = particles.first(where: { $0.text == connection.from }),
-               let toParticle = particles.first(where: { $0.text == connection.to }) {
-                
-                let simpleConnection = SimpleConnection(
-                    startX: fromParticle.x,
-                    startY: fromParticle.y,
-                    endX: toParticle.x,
-                    endY: toParticle.y,
-                    opacity: CGFloat(connection.strength) * 0.7  // Convert Float to CGFloat
+                ScrollView(.horizontal, showsIndicators: false) {
+                    Text(mic.transcript.suffix(200))  // Last 200 chars
+                        .font(.system(size: 11, weight: .regular, design: .monospaced))
+                        .foregroundColor(amber.opacity(0.6))
+                        .lineLimit(1)
+                        .padding(.horizontal, margin)
+                }
+                .frame(height: transcriptHeight)
+                .background(
+                    Rectangle()
+                        .fill(charcoal.opacity(0.95))
+                        .overlay(
+                            Rectangle()
+                                .fill(amber.opacity(0.1))
+                                .frame(height: 1),
+                            alignment: .top
+                        )
                 )
-                connections.append(simpleConnection)
             }
         }
     }
     
-    // MARK: - ANIMATION UPDATES (MainActor isolated)
+    // MARK: - Helper Methods
     
-    @MainActor  // Fixed: Explicit MainActor to resolve isolation
-    private func updateParticles() {
-        let currentTime = Date()
+    private func setupView() {
+        animationEngine.startEngine()
         
-        for i in particles.indices {
-            // Simple floating motion - using CGFloat
-            particles[i].x += CGFloat.random(in: -0.5...0.5)
-            particles[i].y += CGFloat.random(in: -0.3...0.3)
+        // Add some initial drift particles for ambience
+        animationEngine.addDriftParticles(
+            count: 5,
+            bounds: CGRect(x: 0, y: 0, width: 1280, height: 800)
+        )
+    }
+    
+    private func handleNewConcepts(_ concepts: [ConceptNode]) {
+        // Add new concept particles (max 3 at a time to avoid overwhelm)
+        for concept in concepts.prefix(3) {
+            // Skip if already displayed
+            guard conceptPositions[concept.text] == nil else { continue }
             
-            // Boundary wrapping
-            if particles[i].x < 0 { particles[i].x = 400 }
-            if particles[i].x > 400 { particles[i].x = 0 }
-            if particles[i].y < 0 { particles[i].y = 300 }
-            if particles[i].y > 300 { particles[i].y = 0 }
+            // Random position within safe bounds
+            let x = CGFloat.random(in: margin + particleSize...(1280 - margin - particleSize))
+            let y = CGFloat.random(in: margin + particleSize...(800 - transcriptHeight - particleSize))
             
-            // Breathing effect
-            let age = currentTime.timeIntervalSince(particles[i].createdAt)
-            particles[i].scale = 0.7 + 0.3 * sin(age * 0.5)
+            conceptPositions[concept.text] = CGPoint(x: x, y: y)
+            particleLifetimes[concept.text] = Date()
             
-            // Fade out
-            if age > 15.0 {
-                let fadeRatio = (age - 15.0) / 5.0
-                particles[i].opacity = max(0.1, 0.8 - fadeRatio)
-            }
+            // Also add to animation engine for extra effects
+            animationEngine.addThoughtParticle(
+                at: CGPoint(x: x, y: y),
+                concept: concept.text
+            )
+        }
+        
+        // Limit total particles to 20
+        if conceptPositions.count > 20 {
+            removeOldestParticles(count: conceptPositions.count - 20)
         }
     }
     
-    @MainActor  // Fixed: Explicit MainActor to resolve isolation
-    private func cleanupOldElements() {
-        let currentTime = Date()
-        
-        particles.removeAll { particle in
-            currentTime.timeIntervalSince(particle.createdAt) > 20.0
+    private func updateParticlePositions() {
+        // Simple floating motion for all particles
+        for (concept, position) in conceptPositions {
+            // Gentle drift
+            let dx = sin(Date().timeIntervalSince1970 * 0.5 + Double(concept.hashValue)) * 0.3
+            let dy = cos(Date().timeIntervalSince1970 * 0.3 + Double(concept.hashValue)) * 0.2
+            
+            var newPosition = position
+            newPosition.x += dx
+            newPosition.y += dy
+            
+            // Keep within bounds
+            newPosition.x = max(margin + particleSize, min(1280 - margin - particleSize, newPosition.x))
+            newPosition.y = max(margin + particleSize, min(800 - transcriptHeight - particleSize, newPosition.y))
+            
+            conceptPositions[concept] = newPosition
         }
     }
     
-    private func getRecentText() -> String {
-        return mic.getRecentWords(count: 12).joined(separator: " ")
+    private func cleanupOldParticles() {
+        let now = Date()
+        let maxAge: TimeInterval = 120 // 2 minutes
+        
+        // Find particles older than maxAge
+        let expiredConcepts = particleLifetimes.compactMap { (concept, created) -> String? in
+            return now.timeIntervalSince(created) > maxAge ? concept : nil
+        }
+        
+        // Remove expired particles
+        for concept in expiredConcepts {
+            conceptPositions.removeValue(forKey: concept)
+            particleLifetimes.removeValue(forKey: concept)
+        }
+    }
+    
+    private func removeOldestParticles(count: Int) {
+        // Sort by age and remove oldest
+        let sortedByAge = particleLifetimes.sorted { $0.value < $1.value }
+        for (concept, _) in sortedByAge.prefix(count) {
+            conceptPositions.removeValue(forKey: concept)
+            particleLifetimes.removeValue(forKey: concept)
+        }
+    }
+    
+    private func particleOpacity(for concept: String) -> Double {
+        guard let created = particleLifetimes[concept] else { return 0.8 }
+        
+        let age = Date().timeIntervalSince(created)
+        let maxAge: TimeInterval = 120 // 2 minutes
+        
+        // Fade out in last 20 seconds
+        if age > maxAge - 20 {
+            let fadeRatio = (maxAge - age) / 20
+            return 0.8 * fadeRatio
+        }
+        
+        return 0.8
     }
 }
 
-// MARK: - PREVIEW
+// MARK: - Preview
 #Preview {
     AmbientDisplayView()
         .environmentObject(MicPipeline())
-        .environmentObject(ASRBridge())
+        .environmentObject(ASRBridge(mic: MicPipeline()))
+        .frame(width: 1280, height: 800)
 }

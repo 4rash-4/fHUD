@@ -1,9 +1,11 @@
 // MARK: - ConceptWebSocketClient.swift
+
+import Combine
+
 //
 // Lightweight client used by the optional debug overlay to receive
 // concept summaries from the backend.
 import Foundation
-import Combine
 
 /// v1 Message contract for versioning and payload typing
 public struct MessageContract<T: Codable>: Codable {
@@ -67,8 +69,8 @@ public final class ConceptWebSocketClient {
             guard wrapper.type == "concept" else { return }
 
             // Grab the payload on the decode queue
-            let payload  = wrapper.payload          // value type
-            let subject  = publisher                // capture the subject, not self
+            let payload = wrapper.payload // value type
+            let subject = publisher // capture the subject, not self
 
             // Publish on the MainActor to avoid data races
             Task { @MainActor in

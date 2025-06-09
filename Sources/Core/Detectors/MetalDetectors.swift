@@ -11,15 +11,16 @@ import Metal
 import MetalPerformanceShaders
 
 // ─────────────────────────────────────────────────────────────────────────────
+
 // MARK: MetalDriftDetector  (unchanged helper)
+
 // ─────────────────────────────────────────────────────────────────────────────
 
 @available(macOS 10.13, *)
 final class MetalDriftDetector {
-
     private let device: MTLDevice
-    private let queue : MTLCommandQueue
-    private let lib   : MTLLibrary
+    private let queue: MTLCommandQueue
+    private let lib: MTLLibrary
 
     init?() {
         guard
@@ -31,18 +32,19 @@ final class MetalDriftDetector {
         device = d; queue = q; lib = l
     }
 
-    func enqueue() {              // stub ‑ real kernels omitted for brevity
+    func enqueue() { // stub ‑ real kernels omitted for brevity
         _ = queue.makeCommandBuffer()?.commit()
     }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+
 // MARK: MetalFillerDetector
+
 // ─────────────────────────────────────────────────────────────────────────────
 
 @available(macOS 10.13, *)
 final class MetalFillerDetector: FillerDetector {
-
     private let metal = MetalDriftDetector()
     private var wordHashes: [UInt32] = []
 
@@ -53,11 +55,11 @@ final class MetalFillerDetector: FillerDetector {
         }
     )
 
-    private var fillerHashes = Set<UInt32>()      // populated in `init`
+    private var fillerHashes = Set<UInt32>() // populated in `init`
 
     override init() {
         super.init()
-        fillerHashes = Self.prehashed             // *after* super.init()
+        fillerHashes = Self.prehashed // *after* super.init()
     }
 
     // MARK: – API overrides
@@ -81,12 +83,13 @@ final class MetalFillerDetector: FillerDetector {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+
 // MARK: MetalPauseDetector  (identical to previous – unchanged)
+
 // ─────────────────────────────────────────────────────────────────────────────
 
 @available(macOS 10.13, *)
 final class MetalPauseDetector: PauseDetector {
-
     private let metal = MetalDriftDetector()
     private var timestamps: [Float] = []
 
@@ -111,13 +114,14 @@ final class MetalPauseDetector: PauseDetector {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+
 // MARK: MetalPaceAnalyzer  (compile‑fixed; uses RingBuffer from Utils)
+
 // ─────────────────────────────────────────────────────────────────────────────
 
 @available(macOS 10.13, *)
 final class MetalPaceAnalyzer: PaceAnalyzer {
-
-    private let metal  = MetalDriftDetector()
+    private let metal = MetalDriftDetector()
     private var window = RingBuffer<Float>(capacity: 12)
     private var wpmCache: [Float] = []
 
@@ -147,7 +151,9 @@ final class MetalPaceAnalyzer: PaceAnalyzer {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+
 // MARK: Factory helper
+
 // ─────────────────────────────────────────────────────────────────────────────
 
 enum DetectorFactory {

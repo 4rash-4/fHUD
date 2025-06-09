@@ -8,14 +8,13 @@
 import Foundation
 
 public class FillerDetector {
-
     /// Canonical filler list shared by *all* detectors.
     public static let canonicalFillers: Set<String> =
         ["um", "uh", "erm", "hmm", "like"]
 
     // subclasses can read this
     let fillers = FillerDetector.canonicalFillers
-    let window  = RingBuffer<String>(capacity: 30)   // last 30 words
+    let window = RingBuffer<String>(capacity: 30) // last 30 words
 
     public init() {}
 
@@ -28,7 +27,7 @@ public class FillerDetector {
 
     /// ≥ 3 fillers in the last 30 words **and** at least 15 words spoken.
     public func isDrifting() -> Bool {
-        let words       = window.toArray()
+        let words = window.toArray()
         let fillerCount = words.filter { fillers.contains($0) }.count
         return words.count >= 15 && fillerCount >= 3
     }

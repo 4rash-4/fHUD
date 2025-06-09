@@ -1,4 +1,5 @@
 // MARK: - fHUDApp.swift
+
 //
 // Application entry point for the Thought Crystallizer prototype.
 //

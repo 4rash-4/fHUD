@@ -1,5 +1,5 @@
-import Foundation
 import Combine
+import Foundation
 
 /// Represents a single drift indicator snapshot.
 struct DriftEvent: Codable {

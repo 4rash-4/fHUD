@@ -1,4 +1,5 @@
 // MARK: - MicPipeline.swift
+
 //
 // Core observable object that aggregates raw ASR events and updates the
 // drift detectors.  It stores a rolling transcript, computes pace and
@@ -39,7 +40,6 @@ public final class MicPipeline: ObservableObject {
     public init() {
         setupPaceTimer()
     }
-
 
     deinit {
         paceTimer?.invalidate()

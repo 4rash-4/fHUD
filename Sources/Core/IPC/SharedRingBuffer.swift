@@ -1,4 +1,5 @@
 // MARK: - SharedRingBuffer.swift
+
 //
 // POSIX shared memory transport between the Python backend and Swift.
 // Swift reads from the ring buffer at ~60 Hz and publishes transcript
@@ -6,18 +7,19 @@
 
 import Combine
 #if canImport(Darwin)
-import Darwin
+    import Darwin
 
-@_silgen_name("shm_open")
-func c_shm_open(_ name: UnsafePointer<CChar>, _ oflag: Int32, _ mode: mode_t) -> Int32
+    @_silgen_name("shm_open")
+    func c_shm_open(_ name: UnsafePointer<CChar>, _ oflag: Int32, _ mode: mode_t) -> Int32
 
-@_silgen_name("shm_unlink")
-func c_shm_unlink(_ name: UnsafePointer<CChar>) -> Int32
+    @_silgen_name("shm_unlink")
+    func c_shm_unlink(_ name: UnsafePointer<CChar>) -> Int32
 
 #else
-import Glibc
-let c_shm_open = shm_open
-let c_shm_unlink = shm_unlink
+    import Glibc
+
+    let c_shm_open = shm_open
+    let c_shm_unlink = shm_unlink
 #endif
 import Foundation
 
@@ -59,12 +61,12 @@ public final class SharedRingBuffer {
 
         // 3. mmap
         guard let m = mmap(nil,
-                            shmSize,
-                            PROT_READ | PROT_WRITE,
-                            MAP_SHARED,
-                            fd,
-                            0),
-              m != MAP_FAILED
+                           shmSize,
+                           PROT_READ | PROT_WRITE,
+                           MAP_SHARED,
+                           fd,
+                           0),
+            m != MAP_FAILED
         else {
             print("SharedRingBuffer: mmap failed")
             return nil

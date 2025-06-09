@@ -38,7 +38,7 @@ import mlx.core as mx
 from parakeet_mlx import from_pretrained
 
 class OptimizedParakeetStreamer:
-    def __init__(self, model_name: str = "mlx-community/parakeet-tdt-0.6b-v2"):
+    def __init__(self, model_name: str = "/Users/ari/fHUD/models/parakeet-tdt-0.6b-v2"):
         logger.info(f"🎤 Loading Parakeet model: {model_name}")
         
         try:
@@ -328,8 +328,92 @@ if __name__ == "__main__":
         logger.error(f"❌ Server error: {e}")
         logger.error(traceback.format_exc())
         
-# Alias for main_server.py compatibility and stub support
+"""
+Quick patch for parakeet_mlx_server.py
+Add this at the END of the file, right before the final if __name__ == "__main__": block
+"""
+
+# Add compatibility wrapper for main_server.py
+class ParakeetServerWrapper:
+    """Wrapper to make OptimizedParakeetStreamer compatible with main_server.py"""
+    
+    def __init__(self):
+        self.streamer = OptimizedParakeetStreamer()
+        self.audio_queue = asyncio.Queue()
+        self.is_running = False
+        
+    async def stream_transcripts(self):
+        """Yield transcripts as expected by main_server.py"""
+        self.is_running = True
+        
+        # Start audio processing in background
+        asyncio.create_task(self._audio_processor())
+        
+        accumulated_words = []
+        last_yield_time = time.time()
+        
+        while self.is_running:
+            try:
+                # Get words from queue with timeout
+                word_data = await asyncio.wait_for(self.audio_queue.get(), timeout=0.1)
+                accumulated_words.append(word_data['word'])
+                
+                # Yield transcript every 2-3 seconds or when we have enough words
+                current_time = time.time()
+                if (current_time - last_yield_time > 2.0 and accumulated_words) or len(accumulated_words) > 10:
+                    transcript = ' '.join(accumulated_words)
+                    yield transcript
+                    accumulated_words = []
+                    last_yield_time = current_time
+                    
+            except asyncio.TimeoutError:
+                # Check if we should yield what we have
+                if time.time() - last_yield_time > 3.0 and accumulated_words:
+                    transcript = ' '.join(accumulated_words)
+                    yield transcript
+                    accumulated_words = []
+                    last_yield_time = time.time()
+                    
+    async def _audio_processor(self):
+        """Process audio in background and queue words"""
+        # Configure audio stream
+        stream = sd.InputStream(
+            channels=1,
+            samplerate=self.streamer.sample_rate,
+            callback=self.streamer.audio_callback,
+            blocksize=512,
+            latency='low'
+        )
+        
+        logger.info("🎙️  Starting audio processor...")
+        stream.start()
+        self.streamer.is_streaming = True
+        
+        try:
+            while self.is_running:
+                # Process available audio chunks
+                while not self.streamer.processing_queue.empty():
+                    try:
+                        self.streamer.processing_queue.get_nowait()
+                        words = self.streamer.process_audio_chunk()
+                        
+                        # Queue words for transcript generation
+                        for word_data in words:
+                            await self.audio_queue.put(word_data)
+                            
+                    except Empty:
+                        break
+                
+                await asyncio.sleep(0.05)
+                
+        finally:
+            stream.stop()
+            stream.close()
+            self.streamer.is_streaming = False
+            logger.info("🛑 Audio processor stopped")
+
+# Update the alias at the bottom of the file
 if os.getenv("TC_ASR_STUB", "0") == "1":
     ParakeetServer = ParakeetServerStub
 else:
-    ParakeetServer = OptimizedParakeetStreamer
+    ParakeetServer = ParakeetServerWrapper  # Use wrapper instead

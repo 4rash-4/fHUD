@@ -1,4 +1,5 @@
 // MARK: - AdvancedAnimations.swift
+
 //
 // Houses the custom animation engine responsible for concept particles
 // and ambient connections. The engine uses CADisplayLink and several
@@ -37,18 +38,19 @@ extension AnimatedParticle {
          concept: String = "",
          particleType: ParticleType = .thought,
          pulsePhase: Float = 0,
-         size: Float = 2.0) {
+         size: Float = 2.0)
+    {
         self.position = position
         self.velocity = velocity
-        self.acceleration = .zero
-        self.age = 0
+        acceleration = .zero
+        age = 0
         self.maxAge = maxAge
-        self.alpha = 1.0
+        alpha = 1.0
         self.size = size
         self.concept = concept
         self.particleType = particleType
         self.pulsePhase = pulsePhase
-        self.targetPosition = nil
+        targetPosition = nil
     }
 }
 
@@ -68,10 +70,11 @@ struct AnimatedConnection: Identifiable {
         let mid = (startPoint + endPoint) * 0.5
         let perp = simd_normalize(simd_float2(
             -(endPoint.y - startPoint.y),
-             endPoint.x - startPoint.x))
+            endPoint.x - startPoint.x
+        ))
         let offset = perp * (sin(age * 0.5) * 20 + 40)
         controlPoint1 = startPoint + (mid - startPoint) * 0.3 + offset * 0.7
-        controlPoint2 = endPoint   + (mid - endPoint)   * 0.3 + offset * 0.3
+        controlPoint2 = endPoint + (mid - endPoint) * 0.3 + offset * 0.3
     }
 }
 
@@ -107,9 +110,9 @@ class AnimationEngine: ObservableObject {
 
     // Cassette Futurism Colors
     static let amberPrimary = Color(red: 0.96, green: 0.65, blue: 0.14)
-    static let amberGlow    = Color(red: 1.0, green: 0.8,  blue: 0.4)
+    static let amberGlow = Color(red: 1.0, green: 0.8, blue: 0.4)
     static let charcoalDark = Color(red: 0.12, green: 0.12, blue: 0.12)
-    static let charcoalMid  = Color(red: 0.20, green: 0.20, blue: 0.20)
+    static let charcoalMid = Color(red: 0.20, green: 0.20, blue: 0.20)
 
     // MARK: - Lifecycle
 
@@ -123,19 +126,19 @@ class AnimationEngine: ObservableObject {
         guard displayLink == nil && timer == nil else { return }
 
         #if canImport(UIKit)
-        displayLink = CADisplayLink(target: self, selector: #selector(frame(_:)))
-        displayLink?.preferredFramesPerSecond = targetFPS
-        displayLink?.add(to: .main, forMode: .common)
+            displayLink = CADisplayLink(target: self, selector: #selector(frame(_:)))
+            displayLink?.preferredFramesPerSecond = targetFPS
+            displayLink?.add(to: .main, forMode: .common)
         #else
-        timer = DispatchSource.makeTimerSource(queue: .main)
-        timer?.schedule(deadline: .now(), repeating: 1.0 / Double(targetFPS))
-        timer?.setEventHandler { [weak self] in
-            guard let self = self else { return }
-            Task { @MainActor in
-                await self.frameTimer()
+            timer = DispatchSource.makeTimerSource(queue: .main)
+            timer?.schedule(deadline: .now(), repeating: 1.0 / Double(targetFPS))
+            timer?.setEventHandler { [weak self] in
+                guard let self = self else { return }
+                Task { @MainActor in
+                    await self.frameTimer()
+                }
             }
-        }
-        timer?.resume()
+            timer?.resume()
         #endif
 
         print("🎬 Animation engine started – targeting \(targetFPS)fps")
@@ -152,7 +155,7 @@ class AnimationEngine: ObservableObject {
         print("🎬 Animation engine stopped – final FPS: \(String(format: "%.1f", currentFPS))")
     }
 
-    @objc private func frame(_ link: CADisplayLink) {
+    @objc private func frame(_: CADisplayLink) {
         Task { @MainActor in
             await frameTimer()
         }
@@ -198,7 +201,8 @@ class AnimationEngine: ObservableObject {
         for i in animatedParticles.indices.reversed() {
             updateParticlePhysics(&animatedParticles[i], deltaTime: dt)
             if animatedParticles[i].age >= animatedParticles[i].maxAge ||
-               animatedParticles[i].alpha <= 0.01 {
+                animatedParticles[i].alpha <= 0.01
+            {
                 animatedParticles.remove(at: i)
             }
         }
@@ -206,7 +210,8 @@ class AnimationEngine: ObservableObject {
         for i in animatedConnections.indices.reversed() {
             updateConnectionFlow(&animatedConnections[i], deltaTime: dt)
             if animatedConnections[i].age >= animatedConnections[i].maxAge ||
-               animatedConnections[i].strength <= 0.01 {
+                animatedConnections[i].strength <= 0.01
+            {
                 animatedConnections.remove(at: i)
             }
         }
@@ -343,35 +348,35 @@ class AnimationEngine: ObservableObject {
         guard animatedParticles.count < maxParticles else { return }
         let p = simd_float2(Float(pos.x), Float(pos.y))
         let v = simd_float2(
-            Float.random(in: -20...20),
-            Float.random(in: -20...20)
+            Float.random(in: -20 ... 20),
+            Float.random(in: -20 ... 20)
         )
         let part = AnimatedParticle(
             position: p,
             velocity: v,
-            maxAge: Float.random(in: 15...25),
+            maxAge: Float.random(in: 15 ... 25),
             concept: concept,
             particleType: .thought,
-            pulsePhase: Float.random(in: 0...Float.pi*2)
+            pulsePhase: Float.random(in: 0 ... Float.pi * 2)
         )
         animatedParticles.append(part)
     }
 
     func addDriftParticles(count: Int, bounds: CGRect) {
         let toAdd = min(count, maxParticles - animatedParticles.count)
-        for _ in 0..<toAdd {
-            let x = Float.random(in: 0...Float(bounds.width))
-            let y = Float.random(in: 0...Float(bounds.height))
+        for _ in 0 ..< toAdd {
+            let x = Float.random(in: 0 ... Float(bounds.width))
+            let y = Float.random(in: 0 ... Float(bounds.height))
             let v = simd_float2(
-                Float.random(in: -10...10),
-                Float.random(in: -10...10)
+                Float.random(in: -10 ... 10),
+                Float.random(in: -10 ... 10)
             )
             let part = AnimatedParticle(
                 position: simd_float2(x, y),
                 velocity: v,
-                maxAge: Float.random(in: 20...40),
+                maxAge: Float.random(in: 20 ... 40),
                 particleType: .drift,
-                pulsePhase: Float.random(in: 0...Float.pi*2)
+                pulsePhase: Float.random(in: 0 ... Float.pi * 2)
             )
             animatedParticles.append(part)
         }
@@ -381,11 +386,11 @@ class AnimationEngine: ObservableObject {
         guard animatedConnections.count < maxConnections else { return }
         var c = AnimatedConnection(
             startPoint: simd_float2(Float(from.x), Float(from.y)),
-            endPoint:   simd_float2(Float(to.x),   Float(to.y)),
+            endPoint: simd_float2(Float(to.x), Float(to.y)),
             controlPoint1: .zero,
             controlPoint2: .zero,
-            maxAge: Float.random(in: 10...20),
-            pulseOffset: Float.random(in: 0...Float.pi*2)
+            maxAge: Float.random(in: 10 ... 20),
+            pulseOffset: Float.random(in: 0 ... Float.pi * 2)
         )
         c.updateControlPoints()
         animatedConnections.append(c)
@@ -404,19 +409,19 @@ class AnimationEngine: ObservableObject {
             size: 5
         )
         animatedParticles.append(cryst)
-        for i in 0..<8 {
-            let angle = Float(i) * (.pi*2) / 8
+        for i in 0 ..< 8 {
+            let angle = Float(i) * (.pi * 2) / 8
             let r: Float = 40
             let p = simd_float2(
-                base.x + cos(angle)*r,
-                base.y + sin(angle)*r
+                base.x + cos(angle) * r,
+                base.y + sin(angle) * r
             )
             let cp = AnimatedParticle(
                 position: p,
-                velocity: simd_float2(cos(angle)*5, sin(angle)*5),
+                velocity: simd_float2(cos(angle) * 5, sin(angle) * 5),
                 maxAge: 20,
                 particleType: .connection,
-                pulsePhase: Float(i)*0.5
+                pulsePhase: Float(i) * 0.5
             )
             animatedParticles.append(cp)
         }
@@ -477,7 +482,7 @@ class AnimationEngine: ObservableObject {
             }
         }
         if kerr == KERN_SUCCESS {
-            let used = Double(info.resident_size) / (1024*1024*1024)
+            let used = Double(info.resident_size) / (1024 * 1024 * 1024)
             return used / 8.0
         }
         return 0
@@ -490,6 +495,7 @@ class AnimationEngine: ObservableObject {
         func acquire() -> AnimatedParticle {
             pool.popLast() ?? AnimatedParticle(position: .zero)
         }
+
         func release(_ p: AnimatedParticle) {
             if pool.count < maxPoolSize { pool.append(p) }
         }

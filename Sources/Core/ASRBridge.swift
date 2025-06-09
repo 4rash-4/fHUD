@@ -59,6 +59,13 @@ final class ASRBridge: ObservableObject {
 
     private var ringBuffer: SharedRingBuffer?
     private var ringCancellable: AnyCancellable?
+    private var sharedMemoryPoller: Timer?
+    private var lastReadPosition: UInt32 = 0
+
+    private var wsWordCount = 0
+    private var shmWordCount = 0
+    private var wsLatencySum = 0.0
+    private var shmLatencySum = 0.0
     private lazy var eventBatcher = DriftEventBatcher { [weak self] batch in
         self?.sendEventBatch(batch)
     }
@@ -66,14 +73,8 @@ final class ASRBridge: ObservableObject {
     init(mic: MicPipeline) {
         self.mic = mic
         // set up shared‐memory reader
-        if let reader = SharedRingBuffer() {
-            ringBuffer = reader
-            ringCancellable = reader.publisher
-                .receive(on: DispatchQueue.main)
-                .sink { _ in
-                    // Forward transcript text as needed
-                }
-        }
+        let memPath = "/tc_rb" // must match Python writer
+        initializeSharedMemory(path: memPath)
         Task {
             await connectToTranscription()
             await connectToConcepts()
@@ -96,6 +97,38 @@ final class ASRBridge: ObservableObject {
         conceptSocket?.cancel(with: .goingAway, reason: nil)
 
         cancellables.removeAll()
+    }
+
+    // MARK: - Shared Memory
+
+    private func initializeSharedMemory(path: String) {
+        guard ringBuffer == nil else { return }
+        if let reader = SharedRingBuffer(name: path) {
+            ringBuffer = reader
+            sharedMemoryPoller = Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { [weak self] _ in
+                self?.checkSharedMemory()
+            }
+        }
+    }
+
+    private func checkSharedMemory() {
+        guard let buffer = ringBuffer else { return }
+        var mutableBuffer = buffer
+        while let entry = mutableBuffer.readNextWord(lastTail: &lastReadPosition) {
+            mic?.ingest(word: entry.0, at: entry.1)
+            shmWordCount += 1
+            shmLatencySum += Date().timeIntervalSince1970 - entry.1
+            if shmWordCount % 100 == 0 {
+                logStats()
+            }
+        }
+    }
+
+    private func logStats() {
+        let wsAvg = wsWordCount > 0 ? wsLatencySum / Double(wsWordCount) : 0
+        let shmAvg = shmWordCount > 0 ? shmLatencySum / Double(shmWordCount) : 0
+        print("[ASR Stats] WS: \(wsWordCount) words, avg latency \(Int(wsAvg * 1000))ms")
+        print("[ASR Stats] SHM: \(shmWordCount) words, avg latency \(Int(shmAvg * 1000))ms")
     }
 
     // MARK: - Transcription Connection (Port 8765)
@@ -156,6 +189,11 @@ final class ASRBridge: ObservableObject {
             }
             Task { @MainActor in
                 self.mic?.ingest(word: event.w, at: event.t)
+                self.wsWordCount += 1
+                self.wsLatencySum += Date().timeIntervalSince1970 - event.t
+                if self.wsWordCount % 100 == 0 {
+                    self.logStats()
+                }
                 // Buffer for concept extraction
                 self.conceptBuffer.append(event.w)
                 if self.conceptBuffer.count > self.conceptBufferLimit {

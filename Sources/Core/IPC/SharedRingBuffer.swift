@@ -170,7 +170,7 @@ public final class SharedRingBuffer {
             eventMask: .write,
             queue: queue
         )
-        s.setEventHandler(handler)
+        s.setEventHandler(handler) // use closure directly
         s.setCancelHandler { [weak self] in
             self?.source = nil
         }

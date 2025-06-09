@@ -246,6 +246,96 @@ Before writing any Swift code involving collections or closures:
 - **Unused results**: Use `_ =` to explicitly discard
 - **Type inference limits**: Swift won't infer complex generic types
 
+## DispatchSource API Guidelines
+
+### CRITICAL: DispatchSource Usage
+
+1. **Event Handler Setup**
+   ```swift
+   // WRONG - Adding nonexistent parameter labels
+   source.setEventHandler(handler: { ... })
+   
+   // WRONG - Passing wrong type
+   let handler = DispatchWorkItem { ... }
+   source.setEventHandler(handler)
+   
+   // CORRECT - Direct closure, no label
+   source.setEventHandler { 
+       // Handle event
+   }
+   
+   // CORRECT - With captured reference
+   source.setEventHandler { [weak self] in
+       self?.handleEvent()
+   }
+   ```
+
+2. **Cancel Handler Setup**
+   ```swift
+   // WRONG
+   source.setCancelHandler(handler: { ... })
+   
+   // CORRECT - No label
+   source.setCancelHandler {
+       // Cleanup
+   }
+   ```
+
+3. **Complete DispatchSource Pattern**
+   ```swift
+   // CORRECT full pattern
+   let source = DispatchSource.makeFileSystemObjectSource(
+       fileDescriptor: fd,
+       eventMask: .write,
+       queue: queue
+   )
+   
+   source.setEventHandler {  // No label!
+       // Handle events
+   }
+   
+   source.setCancelHandler { // No label!
+       // Cleanup
+   }
+   
+   source.resume() // Don't forget to resume!
+   ```
+
+4. **Common DispatchSource Methods**
+   ```swift
+   // All these methods take closures WITHOUT labels:
+   source.setEventHandler { }      // ✓ No "handler:" label
+   source.setCancelHandler { }     // ✓ No "handler:" label
+   source.setRegistrationHandler { } // ✓ No "handler:" label
+   
+   // These methods have no parameters:
+   source.resume()    // ✓ No parameters
+   source.suspend()   // ✓ No parameters
+   source.cancel()    // ✓ No parameters
+   ```
+
+### DispatchSource vs DispatchQueue API Differences
+
+**DispatchQueue**:
+```swift
+queue.async { }                    // No label
+queue.sync { }                     // No label
+queue.asyncAfter(deadline: .now()) { } // Has 'deadline:' label
+```
+
+**DispatchSource**:
+```swift
+source.setEventHandler { }         // No label (different from queue)
+source.schedule(deadline: .now())  // Has 'deadline:' label
+```
+
+### Pre-Dispatch API Checklist
+Before using any Dispatch API:
+1. ✓ Verify exact method signature in docs/autocomplete
+2. ✓ Check if parameters have labels
+3. ✓ Confirm closure vs DispatchWorkItem usage
+4. ✓ Remember to call resume() on DispatchSource
+
 ---
 
 ## BATCH 1: Parallel Implementation (WebSocket + SharedMem)

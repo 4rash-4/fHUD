@@ -61,6 +61,8 @@ final class ASRBridge: ObservableObject {
     private var ringCancellable: AnyCancellable?
     private var sharedMemoryPoller: Timer?
     private var lastReadPosition: UInt32 = 0
+    private var lastSequence: UInt32 = 0
+    private var sentinelTimestamp: Date?
 
     private var wsWordCount = 0
     private var shmWordCount = 0
@@ -117,12 +119,30 @@ final class ASRBridge: ObservableObject {
         guard let buffer = ringBuffer else { return }
         let mutableBuffer = buffer
         while let entry = mutableBuffer.readNextWord(lastTail: &lastReadPosition) {
-            mic?.ingest(word: entry.0, at: entry.1)
+            sentinelTimestamp = nil
+            if entry.sequence != lastSequence + 1 {
+                print("Sequence gap: expected \(lastSequence + 1), got \(entry.sequence)")
+                requestRetransmission(from: lastSequence + 1)
+            }
+            lastSequence = entry.sequence
+            mic?.ingest(word: entry.word, at: entry.timestamp)
             shmWordCount += 1
-            shmLatencySum += Date().timeIntervalSince1970 - entry.1
+            shmLatencySum += Date().timeIntervalSince1970 - entry.timestamp
             if shmWordCount % 100 == 0 {
                 logStats()
             }
+        }
+
+        if mutableBuffer.lastReadWasIncomplete {
+            if let start = sentinelTimestamp {
+                if Date().timeIntervalSince(start) > 1 {
+                    print("Shared memory writer stalled")
+                }
+            } else {
+                sentinelTimestamp = Date()
+            }
+        } else {
+            sentinelTimestamp = nil
         }
     }
 
@@ -335,6 +355,14 @@ final class ASRBridge: ObservableObject {
             didPause: mic.didPause,
             didRepair: mic.didRepair
         )
+    }
+
+    private func requestRetransmission(from sequence: UInt32) {
+        guard let webSocket else { return }
+        let msg = ["type": "retransmit", "from": sequence]
+        if let data = try? JSONSerialization.data(withJSONObject: msg, options: []) {
+            Task { try? await webSocket.send(.data(data)) }
+        }
     }
 
     // MARK: - Reconnection Logic

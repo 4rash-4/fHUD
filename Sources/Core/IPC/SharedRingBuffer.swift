@@ -6,18 +6,20 @@
 // ## Binary Layout
 //
 // ```
-// Header (8 bytes)
-//   0-3  head   UInt32 - next write position
-//   4-7  tail   UInt32 - last read position
-// Version (1 byte)
-//   8    UInt8  - format version (0x01)
-// Data (starts at byte 9)
+// Header (16 bytes)
+//   0-3  head      UInt32 - next write position
+//   4-7  tail      UInt32 - last read position
+//   8-11 overflow  UInt32 - dropped entry count
+//   12   version   UInt8  - format version (0x01)
+// Data (starts at byte 16)
 //   Repeating entries of:
 //     length      UInt16    total size of this entry
+//     sequence    UInt32    monotonic counter
 //     timestamp   Float64   seconds since start
 //     confidence  Float32   0.0 - 1.0
 //     wordLength  UInt16    UTF-8 byte count
 //     wordData    [UInt8]   variable length UTF‑8 bytes
+//     crc32       UInt32    checksum of sequence..wordData
 //     padding     [UInt8]   0-7 bytes so next entry starts on 8 byte boundary
 // ```
 //
@@ -47,8 +49,9 @@ import Foundation
 public final class SharedRingBuffer {
     private let shmName: String
     private let shmSize = 64 * 1024
-    private let versionOffset = 8
-    private let dataOffset = 9
+    private let overflowOffset = 8
+    private let versionOffset = 12
+    private let dataOffset = 16
     private var fd: Int32 = -1
     private var ptr: UnsafeMutableRawPointer!
     private var lockFd: Int32 = -1
@@ -165,7 +168,16 @@ public final class SharedRingBuffer {
 
     /// Read the next word entry from the buffer using the provided tail pointer.
     /// Returns nil if no complete entry is available.
-    public func readNextWord(lastTail: inout UInt32) -> (String, Double, Float)? {
+    public struct WordEntry {
+        public let word: String
+        public let sequence: UInt32
+        public let timestamp: Double
+        public let confidence: Float
+    }
+
+    public private(set) var lastReadWasIncomplete = false
+
+    public func readNextWord(lastTail: inout UInt32) -> WordEntry? {
         let head = readUInt32(at: 0)
         var tail = lastTail
         let capacity = UInt32(shmSize - dataOffset)
@@ -178,7 +190,11 @@ public final class SharedRingBuffer {
 
         // Read entry length
         let length: UInt16 = ptr.load(fromByteOffset: offset, as: UInt16.self)
-        if length == 0 || length > 1000 || remaining < Int(length) { return nil }
+        if length == 0 {
+            lastReadWasIncomplete = true
+            return nil
+        }
+        if length > 2048 || remaining < Int(length) { return nil }
 
         // Gather bytes for entry handling wraparound
         var entry = Data(count: Int(length))
@@ -193,12 +209,18 @@ public final class SharedRingBuffer {
             }
         }
 
+        // Validate CRC
+        let crcStored = entry.withUnsafeBytes { $0.load(fromByteOffset: Int(length) - 4, as: UInt32.self) }
+        let crcCalc = CRC32.checksum(entry[2..<Int(length) - 4])
+        guard crcStored == crcCalc else { return nil }
+
         // Parse fields
-        let ts = entry.withUnsafeBytes { $0.load(fromByteOffset: 2, as: Double.self) }
-        let conf = entry.withUnsafeBytes { $0.load(fromByteOffset: 10, as: Float.self) }
-        let wordLen = entry.withUnsafeBytes { $0.load(fromByteOffset: 14, as: UInt16.self) }
-        guard wordLen > 0, Int(wordLen) <= Int(length) - 16 else { return nil }
-        let wordData = entry[16..<16+Int(wordLen)]
+        let seq = entry.withUnsafeBytes { $0.load(fromByteOffset: 2, as: UInt32.self) }
+        let ts = entry.withUnsafeBytes { $0.load(fromByteOffset: 6, as: Double.self) }
+        let conf = entry.withUnsafeBytes { $0.load(fromByteOffset: 14, as: Float.self) }
+        let wordLen = entry.withUnsafeBytes { $0.load(fromByteOffset: 18, as: UInt16.self) }
+        guard wordLen > 0, Int(wordLen) <= Int(length) - 24 else { return nil }
+        let wordData = entry[20..<20+Int(wordLen)]
         guard let word = String(data: wordData, encoding: .utf8) else { return nil }
 
         // Advance tail with padding alignment
@@ -207,7 +229,7 @@ public final class SharedRingBuffer {
         lastTail = tail
         writeUInt32(at: 4, value: tail)
 
-        return (word, ts, conf)
+        return WordEntry(word: word, sequence: seq, timestamp: ts, confidence: conf)
     }
 
     deinit {

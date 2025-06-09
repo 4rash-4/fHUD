@@ -22,7 +22,7 @@ public struct ConceptMessage: Codable {
 }
 
 /// WebSocket client for concept messages
-public final class ConceptWebSocketClient {
+public actor ConceptWebSocketClient {
     private let url = URL(string: "ws://127.0.0.1:8765/concepts")!
     private var task: URLSessionWebSocketTask?
     private let decoder = JSONDecoder()
@@ -32,7 +32,7 @@ public final class ConceptWebSocketClient {
 
     public init() {}
 
-    public func connect() {
+    public func connect() async {
         let session = URLSession(configuration: .ephemeral)
         task = session.webSocketTask(with: url)
         task?.resume()
@@ -51,10 +51,10 @@ public final class ConceptWebSocketClient {
                     }
 
                 case let .success(.string(text)):
-                    strongSelf.decodeAndPublish(text)
+                    Task { strongSelf.decodeAndPublish(text) }
 
                 default:
-                    strongSelf.receive()
+                    Task { strongSelf.receive() }
                 }
             }
         }
@@ -87,12 +87,12 @@ public final class ConceptWebSocketClient {
             guard let self = self else { return }
             Task { @MainActor in
                 self.reconnectDelay = min(self.reconnectDelay * 2, 30)
-                self.connect()
+                await self.connect()
             }
         }
     }
 
-    public func disconnect() {
+    public func disconnect() async {
         task?.cancel(with: .goingAway, reason: nil)
     }
 }

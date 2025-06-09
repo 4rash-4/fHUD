@@ -17,6 +17,69 @@ This is a living breathing app that works on M1 MacBook Pro with 8GB RAM. Every 
 ### Migration Strategy: Incremental Batches
 Each batch MUST leave the system fully functional. Test thoroughly after each batch before proceeding.
 
+## Swift Concurrency Safety Rules
+
+### CRITICAL: Swift Concurrency Checklist
+Before making ANY changes involving async/await, actors, or concurrent code:
+
+1. **Retroactive Conformances (Swift 5.9+)**
+   ```swift
+   // WRONG - Old pattern
+   extension Timer: @unchecked Sendable {}
+   
+   // CORRECT - Modern Swift
+   extension Timer: @retroactive @unchecked Sendable {}
+   ```
+   **Rule**: Always use `@retroactive` when extending external types
+
+2. **Actor Isolation with Callbacks**
+   ```swift
+   // WRONG - Timer callback not on MainActor
+   Timer.scheduledTimer { _ in
+       self?.mainActorMethod() // ERROR!
+   }
+   
+   // CORRECT - Explicit actor context
+   Timer.scheduledTimer { _ in
+       Task { @MainActor in
+           self?.mainActorMethod()
+       }
+   }
+   ```
+   **Rule**: Timer, DispatchQueue, and similar callbacks are NOT on MainActor
+
+3. **Sendable Conformance for Concurrent Contexts**
+   ```swift
+   // If a class is captured in @Sendable closures:
+   final class MyClass: Sendable {
+       // All stored properties must be Sendable
+       // Use locks or actors for mutable state
+   }
+   ```
+   **Rule**: Any type captured in concurrent contexts MUST be Sendable
+
+4. **Mutability Assumptions**
+   ```swift
+   // Check API docs before assuming mutability
+   let buffer = ringBuffer  // Try 'let' first
+   // Only use 'var' if compiler requires it
+   ```
+   **Rule**: Start with `let`, only use `var` when proven necessary
+
+### Pre-Change Verification
+Before modifying ANY concurrent code:
+1. Check if the class/struct is marked with `@MainActor`
+2. Verify all captured types are Sendable
+3. Understand which actor/thread callbacks execute on
+4. Read API documentation for mutability requirements
+
+### Common Swift Concurrency Pitfalls
+- **Timer callbacks**: Execute on arbitrary threads, not MainActor
+- **URLSession callbacks**: Execute on background queues
+- **DispatchQueue closures**: Execute on their specified queue
+- **Task {}**: Inherits actor context from enclosing scope
+- **Task.detached {}**: No actor context inherited
+
 ---
 
 ## BATCH 1: Parallel Implementation (WebSocket + SharedMem)

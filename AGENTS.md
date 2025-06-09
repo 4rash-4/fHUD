@@ -66,12 +66,102 @@ Before making ANY changes involving async/await, actors, or concurrent code:
    ```
    **Rule**: Start with `let`, only use `var` when proven necessary
 
+### CRITICAL: Actor Isolation Rules
+
+**NEVER convert a class to an actor without understanding these rules:**
+
+1. **Actor Method Calls Require Await**
+   ```swift
+   // WRONG - Calling actor method from non-actor context
+   actor MyActor {
+       func doWork() { }
+   }
+   
+   DispatchQueue.global().async {
+       myActor.doWork() // ERROR: Missing await
+   }
+   
+   // CORRECT
+   DispatchQueue.global().async {
+       Task {
+           await myActor.doWork()
+       }
+   }
+   ```
+
+2. **No Cross-Actor Property Mutations**
+   ```swift
+   // WRONG - Mutating actor property from different actor
+   actor MyActor {
+       var count = 0
+   }
+   
+   Task { @MainActor in
+       myActor.count = 5 // ERROR: Cannot mutate from MainActor
+   }
+   
+   // CORRECT - Add a method to perform mutation
+   actor MyActor {
+       var count = 0
+       func setCount(_ n: Int) { count = n }
+   }
+   
+   Task { @MainActor in
+       await myActor.setCount(5)
+   }
+   ```
+
+3. **Don't Mix GCD with Actors**
+   ```swift
+   // WRONG - Mixing DispatchQueue with actor
+   actor MyActor {
+       let queue = DispatchQueue(label: "MyQueue")
+       func badIdea() {
+           queue.async { self.doWork() } // Multiple isolation issues!
+       }
+   }
+   
+   // CORRECT - Use Task for actor-based concurrency
+   actor MyActor {
+       func goodIdea() {
+           Task { await doWork() }
+       }
+   }
+   ```
+
+4. **Actor Conversion Decision Tree**
+   ```
+   Should I convert this class to an actor?
+   ├─ Is it primarily for data isolation? → Maybe actor
+   ├─ Does it use DispatchQueue/locks? → Needs major refactor
+   ├─ Is it UI-bound? → Consider @MainActor class instead
+   └─ Does it need synchronous access? → Don't use actor
+   ```
+
+### Actor vs Sendable Class Guidelines
+
+**Use Actor when:**
+- Primary goal is data isolation
+- Async access is acceptable
+- Want automatic synchronization
+
+**Use Sendable Class when:**
+- Need synchronous access
+- Already using GCD effectively
+- Integrating with non-async APIs
+
+**Use @MainActor Class when:**
+- Primarily UI-related
+- Needs main thread execution
+- Simpler than cross-actor communication
+
 ### Pre-Change Verification
 Before modifying ANY concurrent code:
 1. Check if the class/struct is marked with `@MainActor`
 2. Verify all captured types are Sendable
 3. Understand which actor/thread callbacks execute on
 4. Read API documentation for mutability requirements
+5. **NEW**: If converting to actor, plan to refactor ALL call sites to use await
 
 ### Common Swift Concurrency Pitfalls
 - **Timer callbacks**: Execute on arbitrary threads, not MainActor
@@ -79,6 +169,82 @@ Before modifying ANY concurrent code:
 - **DispatchQueue closures**: Execute on their specified queue
 - **Task {}**: Inherits actor context from enclosing scope
 - **Task.detached {}**: No actor context inherited
+- **Actor methods**: Always async when called from outside
+- **Actor properties**: Cannot be mutated from outside the actor
+
+## Swift Type System Guidelines
+
+### CRITICAL: Type Inference Rules
+
+1. **Heterogeneous Collections Require Explicit Types**
+   ```swift
+   // WRONG - Ambiguous type inference
+   let msg = ["type": "retransmit", "from": sequence]  // Error!
+   
+   // CORRECT - Explicit type annotation
+   let msg: [String: Any] = ["type": "retransmit", "from": sequence]
+   
+   // BETTER - Use Codable struct
+   struct RetransmitRequest: Codable {
+       let type = "retransmit"
+       let from: UInt32
+   }
+   ```
+   **Rule**: Always explicitly type mixed-type collections or use structs
+
+2. **withCString and "with" Pattern APIs**
+   ```swift
+   // WRONG - Ignoring return value
+   name.withCString { ptr in
+       doSomething(ptr)  // Warning: Result unused
+   }
+   
+   // CORRECT - Return from closure
+   let result = name.withCString { ptr in
+       return doSomething(ptr)
+   }
+   
+   // OR - Use @discardableResult if truly void
+   _ = name.withCString { ptr in
+       doSomething(ptr)
+       return () // Explicit void return
+   }
+   ```
+   **Rule**: "with" pattern APIs expect you to return from the closure
+
+3. **Type Annotations Best Practices**
+   ```swift
+   // Prefer explicit types for:
+   - Mixed-type collections: [String: Any]
+   - Empty collections: [String] = []
+   - Numeric literals with specific types: let port: UInt16 = 8080
+   - Protocol conformances: let delegate: MyProtocol = MyClass()
+   ```
+
+4. **Void/Discardable Results**
+   ```swift
+   // If a function returns a value you don't need:
+   _ = functionThatReturnsValue()
+   
+   // For withCString specifically:
+   _ = string.withCString { cStr in
+       // Use cStr
+       return someValue
+   }
+   ```
+
+### Type Safety Checklist
+Before writing any Swift code involving collections or closures:
+1. ✓ Are all collection literals homogeneous? If not, add explicit type
+2. ✓ Do "with" pattern methods have proper return values?
+3. ✓ Are unused results explicitly discarded with `_`?
+4. ✓ Do empty collections have type annotations?
+
+### Swift API Patterns to Remember
+- **"with" methods** (withCString, withUnsafeBytes, etc.): Always return from closure
+- **Heterogeneous dictionaries**: Always use explicit `[String: Any]` or Codable structs
+- **Unused results**: Use `_ =` to explicitly discard
+- **Type inference limits**: Swift won't infer complex generic types
 
 ---
 

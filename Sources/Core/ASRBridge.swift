@@ -186,7 +186,9 @@ final class ASRBridge: ObservableObject {
 
     private func startHealthMonitor() {
         healthTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] _ in
-            self?.evaluateDataSource()
+            Task { @MainActor in
+                self?.evaluateDataSource()
+            }
         }
     }
 

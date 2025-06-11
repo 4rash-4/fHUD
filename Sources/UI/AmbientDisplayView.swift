@@ -32,6 +32,10 @@ struct AmbientDisplayView: View {
     private let charcoal = Color(red: 0.12, green: 0.12, blue: 0.12)
     private let dimAmber = Color(red: 0.96, green: 0.65, blue: 0.14, opacity: 0.3)
 
+    private var conceptColor: Color {
+        asrBridge.currentSource == .sharedMemory ? amber : .red
+    }
+
     // Layout constants for 1280x800 display
     private let margin: CGFloat = 30
     private let transcriptHeight: CGFloat = 60
@@ -60,7 +64,7 @@ struct AmbientDisplayView: View {
                                 width: CGFloat(particle.size),
                                 height: CGFloat(particle.size)
                             )),
-                            with: .color(amber.opacity(0.3))
+                            with: .color(conceptColor.opacity(0.3))
                         )
                     }
                 }
@@ -108,7 +112,7 @@ struct AmbientDisplayView: View {
                     .padding(.vertical, 4)
                     .background(
                         RoundedRectangle(cornerRadius: 12)
-                            .fill(amber.opacity(particleOpacity(for: concept)))
+                            .fill(conceptColor.opacity(particleOpacity(for: concept)))
                     )
                     .position(position)
                     .animation(.easeInOut(duration: 0.3), value: position)
@@ -130,7 +134,7 @@ struct AmbientDisplayView: View {
 
                     context.stroke(
                         path,
-                        with: .color(amber.opacity(Double(connection.strength) * 0.5)),
+                        with: .color(conceptColor.opacity(Double(connection.strength) * 0.5)),
                         lineWidth: 1.5
                     )
                 }

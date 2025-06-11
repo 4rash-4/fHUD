@@ -14,6 +14,7 @@ public struct HUDOverlayView: View {
     // --------------------------------------------------------------------
     // Dependencies
     @EnvironmentObject private var mic: MicPipeline
+    @EnvironmentObject private var asrBridge: ASRBridge
 
     // --------------------------------------------------------------------
     // Concept‑popup state
@@ -62,6 +63,10 @@ public struct HUDOverlayView: View {
                 }
                 .font(.system(size: 11, design: .monospaced))
                 .foregroundColor(.yellow)
+
+                Text("Source: \(asrBridge.currentSource.rawValue)")
+                    .font(.system(size: 11, design: .monospaced))
+                    .foregroundColor(asrBridge.currentSource == .sharedMemory ? .green : .orange)
             }
             .padding(12)
             .background(Color.black.opacity(0.65))

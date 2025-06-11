@@ -561,8 +561,14 @@ struct TranscriptionEvent: Codable {
 }
 
 struct RetransmitMessage: Codable {
-    let type: String = "retransmit"
+    /// Fixed message type for retransmission requests
+    /// Excluded from Codable to silence warnings
+    let type = "retransmit"
     let from: UInt32
+
+    enum CodingKeys: String, CodingKey {
+        case from
+    }
 }
 
 struct ConceptEvent: Codable {

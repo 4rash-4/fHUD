@@ -198,6 +198,7 @@ public final class SharedRingBuffer {
     }
 
     public private(set) var lastReadWasIncomplete = false
+    public private(set) var crcErrorCount = 0
 
     public func readNextWord(lastTail: inout UInt32) -> WordEntry? {
         let head = readUInt32(at: 0)
@@ -234,7 +235,10 @@ public final class SharedRingBuffer {
         // Validate CRC
         let crcStored = entry.withUnsafeBytes { $0.load(fromByteOffset: Int(length) - 4, as: UInt32.self) }
         let crcCalc = CRC32.checksum(entry[2..<Int(length) - 4])
-        guard crcStored == crcCalc else { return nil }
+        guard crcStored == crcCalc else {
+            crcErrorCount += 1
+            return nil
+        }
 
         // Parse fields
         let seq = entry.withUnsafeBytes { $0.load(fromByteOffset: 2, as: UInt32.self) }

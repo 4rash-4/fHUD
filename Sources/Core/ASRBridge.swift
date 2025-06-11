@@ -27,6 +27,11 @@ import Network
 /// Enhanced bridge that handles real-time Parakeet transcription and Gemma concept extraction
 @MainActor
 final class ASRBridge: ObservableObject {
+    enum DataSource: String {
+        case sharedMemory = "SHM"
+        case webSocket = "WS"
+    }
+
     // Use weak reference to prevent retain cycles
     private weak var mic: MicPipeline?
     private var webSocket: URLSessionWebSocketTask?
@@ -67,15 +72,31 @@ final class ASRBridge: ObservableObject {
     private var shmWordCount = 0
     private var wsLatencySum = 0.0
     private var shmLatencySum = 0.0
+
+    // MARK: - Source switching
+    @Published var currentSource: DataSource
+    private let useSharedMemoryPrimary: Bool
+    private var lastSHMWord = Date.distantPast
+    private var lastWSWord = Date.distantPast
+    private var sequenceGapCount = 0
+    private var healthTimer: Timer?
+
     private lazy var eventBatcher = DriftEventBatcher { [weak self] batch in
         self?.sendEventBatch(batch)
     }
 
     init(mic: MicPipeline) {
         self.mic = mic
+        if let env = ProcessInfo.processInfo.environment["FHUD_SHM_PRIMARY"] {
+            self.useSharedMemoryPrimary = env == "1"
+        } else {
+            self.useSharedMemoryPrimary = Double.random(in: 0..<1) < 0.1
+        }
+        self.currentSource = useSharedMemoryPrimary ? .sharedMemory : .webSocket
         // set up shared‐memory reader
         let memPath = "/tc_rb" // must match Python writer
         initializeSharedMemory(path: memPath)
+        startHealthMonitor()
         Task {
             await connectToTranscription()
             await connectToConcepts()
@@ -88,6 +109,7 @@ final class ASRBridge: ObservableObject {
         webSocket?.cancel(with: .goingAway, reason: nil)
         conceptSocket?.cancel(with: .goingAway, reason: nil)
         cancellables.removeAll()
+        healthTimer?.invalidate()
     }
 
     private func cleanup() {
@@ -120,11 +142,15 @@ final class ASRBridge: ObservableObject {
         while let entry = mutableBuffer.readNextWord(lastTail: &lastReadPosition) {
             sentinelTimestamp = nil
             if entry.sequence != lastSequence + 1 {
+                sequenceGapCount += 1
                 print("Sequence gap: expected \(lastSequence + 1), got \(entry.sequence)")
                 requestRetransmission(from: lastSequence + 1)
             }
             lastSequence = entry.sequence
-            mic?.ingest(word: entry.word, at: entry.timestamp)
+            lastSHMWord = Date()
+            if currentSource == .sharedMemory {
+                mic?.ingest(word: entry.word, at: entry.timestamp)
+            }
             shmWordCount += 1
             shmLatencySum += Date().timeIntervalSince1970 - entry.timestamp
             if shmWordCount % 100 == 0 {
@@ -150,6 +176,29 @@ final class ASRBridge: ObservableObject {
         let shmAvg = shmWordCount > 0 ? shmLatencySum / Double(shmWordCount) : 0
         print("[ASR Stats] WS: \(wsWordCount) words, avg latency \(Int(wsAvg * 1000))ms")
         print("[ASR Stats] SHM: \(shmWordCount) words, avg latency \(Int(shmAvg * 1000))ms")
+    }
+
+    private var shmHealthy: Bool {
+        Date().timeIntervalSince(lastSHMWord) < 5 &&
+            sequenceGapCount == 0 &&
+            (ringBuffer?.crcErrorCount ?? 0) == 0
+    }
+
+    private func startHealthMonitor() {
+        healthTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] _ in
+            self?.evaluateDataSource()
+        }
+    }
+
+    private func evaluateDataSource() {
+        guard useSharedMemoryPrimary else { return }
+        if currentSource == .sharedMemory, !shmHealthy {
+            print("⚠️ Shared memory unhealthy. Falling back to WebSocket")
+            currentSource = .webSocket
+        } else if currentSource == .webSocket, shmHealthy {
+            print("✅ Shared memory healthy again. Switching back")
+            currentSource = .sharedMemory
+        }
     }
 
     // MARK: - Transcription Connection (Port 8765)
@@ -209,7 +258,10 @@ final class ASRBridge: ObservableObject {
                 return
             }
             Task { @MainActor in
-                self.mic?.ingest(word: event.w, at: event.t)
+                self.lastWSWord = Date()
+                if self.currentSource == .webSocket {
+                    self.mic?.ingest(word: event.w, at: event.t)
+                }
                 self.wsWordCount += 1
                 self.wsLatencySum += Date().timeIntervalSince1970 - event.t
                 if self.wsWordCount % 100 == 0 {
